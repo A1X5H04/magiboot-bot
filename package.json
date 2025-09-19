@@ -3,7 +3,6 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
@@ -11,11 +10,19 @@
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
+		"@types/node": "^24.2.1",
+		"tsx": "^4.20.3",
 		"typescript": "^5.5.2",
 		"vitest": "~3.2.0",
-		"wrangler": "^4.28.1"
+		"wrangler": "^4.37.1"
 	},
 	"dependencies": {
-		"grammy": "^1.37.0"
+		"@grammyjs/parse-mode": "^2.2.0",
+		"@grammyjs/router": "^2.0.0",
+		"@grammyjs/storage-cloudflare": "^2.4.2",
+		"@libsql/client": "^0.15.10",
+		"@types/uuid": "^10.0.0",
+		"grammy": "^1.37.0",
+		"uuid": "^11.1.0"
 	}
 }
