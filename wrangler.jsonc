@@ -15,7 +15,8 @@
 	},
 	"vars": {
 		"ENVIRONMENT": "development",
-		"BOT_INFO": "{\"id\":7998712945,\"is_bot\":true,\"first_name\":\"Bootanimation Bot\",\"username\":\"MagibootBot\",\"can_join_groups\":true,\"can_read_all_group_messages\":false,\"supports_inline_queries\":false,\"can_connect_to_business\":false,\"has_main_web_app\":false}"
+		"BOT_INFO": "{\"id\":7998712945,\"is_bot\":true,\"first_name\":\"Bootanimation Bot\",\"username\":\"MagibootBot\",\"can_join_groups\":true,\"can_read_all_group_messages\":false,\"supports_inline_queries\":false,\"can_connect_to_business\":false,\"has_main_web_app\":false}",
+		"GITHUB_SLUG": "a1x5h04/magiboot-bot",
 	},
 	"dev": {
 		"ip": "0.0.0.0",
@@ -27,6 +28,12 @@
 			"database_name": "magiboot-db",
 			"binding": "D1_DB",
 			"database_id": "e9b05532-4511-4582-b6dd-de0d1970aade"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "JOB_QUEUE",
+			"id": "5e13dfa0801e43d292278ef0ae06db71"
 		}
 	]
 	/**
