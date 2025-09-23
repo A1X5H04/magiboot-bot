@@ -1,4 +1,4 @@
-import { b, bold, code, fmt, FormattedString, link } from "@grammyjs/parse-mode";
+import { FormattedString} from "@grammyjs/parse-mode";
 import { CustomContext } from "../../types/context";
 
 export function handleStartCommand(ctx: CustomContext) {

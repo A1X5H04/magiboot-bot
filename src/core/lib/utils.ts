@@ -1,21 +1,13 @@
-import { BotContext } from '../../types/cloudflare';
+export function createProgressBar(percentage: number, length: number = 10): string {
+  const clampedPercentage = Math.max(0, Math.min(100, percentage));
+  const filledBlocks = Math.round((clampedPercentage / 100) * length);
+  const emptyBlocks = length - filledBlocks;
 
-export function isCommand(text: string, command: string): boolean {
-  return text.startsWith(`/${command}`) || text.startsWith(`/${command}@`);
-}
+  const filledEmoji = '🟩';
+  const emptyEmoji = '◻️';
 
-export function getCommandArgs(text: string): string {
-  return text.split(' ').slice(1).join(' ').trim();
-}
-
-export function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return 'An unknown error occurred';
-}
-
-export async function replyWithError(ctx: BotContext, error: unknown): Promise<void> {
-  const errorMessage = formatError(error);
-  await ctx.reply(`❌ Error: ${errorMessage}`);
+  const bar = filledEmoji.repeat(filledBlocks) + emptyEmoji.repeat(emptyBlocks);
+  const percentageStr = `${clampedPercentage.toFixed(0)}%`;
+  
+  return `${percentageStr} [${bar}]`;
 }
