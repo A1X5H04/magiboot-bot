@@ -1,18 +1,33 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
+import { webhookCallback } from 'grammy';
+import { Env } from './types/cloudflare';
+import initBot from './core/bot';
 
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		return new Response('Hello World!');
-	},
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<Response> {
+    const url = new URL(request.url);
+
+    try {
+
+      const bot = await initBot(env)
+
+
+      if (url.pathname === "/tg-webhooks") {
+        const handleRequest = webhookCallback(bot, 'cloudflare-mod');
+        return await handleRequest(request);
+      }
+
+    
+      // everything else gets 404
+      return new Response("Not Found", { status: 404 });
+
+
+    } catch (err) {
+      console.error('Error handling request:', err);
+      return new Response('Server Error', { status: 500 });
+    }
+  },
 } satisfies ExportedHandler<Env>;
