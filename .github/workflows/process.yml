@@ -1,0 +1,24 @@
+name: Process Video for Bootanimation
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'URL of video to process'
+        required: true
+      upscale:
+        description: 'Scale to 1080p?'
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Echo input
+        run: |
+          echo "Video URL: ${{ github.event.inputs.video_url }}"
+          echo "Upscale: ${{ github.event.inputs.upscale }}"
