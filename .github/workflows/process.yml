@@ -6,19 +6,31 @@ on:
       video_url:
         description: 'URL of video to process'
         required: true
-      upscale:
-        description: 'Scale to 1080p?'
-        type: boolean
-        default: true
+      other_metadata:
+        description: '[JSON] Other metadata'
+        required: false
 
 jobs:
-  build:
+  process:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Echo input
+      - name: Parse JSON input
+        id: parse
         run: |
-          echo "Video URL: ${{ github.event.inputs.video_url }}"
-          echo "Upscale: ${{ github.event.inputs.upscale }}"
+          if [ -n "${{ github.event.inputs.other_metadata }}" ]; then
+            echo '${{ github.event.inputs.other_metadata }}' | jq -r '
+              to_entries | .[] | "export \(.key)=\(.value)"' >> $GITHUB_ENV
+          else
+            echo "No other_metadata provided"
+          fi
+        
+      - name: Output variables
+        run: |
+          echo ${{ github.event.inputs.video_url }}
+          echo "${{ github.event.inputs.other_metadata }}"
+
+          
+
