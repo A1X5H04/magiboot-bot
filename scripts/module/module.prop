@@ -1,0 +1,6 @@
+id=magiboot-dynamic
+name=MagiBoot Dynamic Animation
+version=v1.0
+versionCode=1
+author=A1X5H04
+description=A dynamic bootanimation that works on Magisk and KernelSU.
