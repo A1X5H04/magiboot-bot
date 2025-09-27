@@ -1,0 +1,48 @@
+# This composite action encapsulates the logic for sending a status update webhook.
+# It is self-contained and runs on the host runner, ensuring 'curl' and 'jq' are available.
+
+name: 'Send Status Update'
+description: 'Sends a status update to the bot webhook'
+
+inputs:
+  status:
+    description: 'The status to send (e.g., "processing", "error", "finished")'
+    required: true
+  message:
+    description: 'The descriptive message for the status update'
+    required: true
+  metadata:
+    description: 'The JSON string of metadata for the job'
+    required: true
+  download_link:
+    description: 'Optional download link for the final artifact'
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Prepare and send status webhook"
+      shell: bash
+      run: |
+        set -e
+        
+        # Start with the metadata JSON and add the new status and message
+        PAYLOAD=$(echo '${{ inputs.metadata }}' | jq \
+            --arg status "${{ inputs.status }}" \
+            --arg message "${{ inputs.message }}" \
+            '.status = $status | .message = $message')
+
+        # If a download link is provided, add it to a 'data' object in the payload
+        if [ -n "${{ inputs.download_link }}" ]; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg link "${{ inputs.download_link }}" '.data = {downloadLink: $link}')
+        fi
+
+        echo "Sending status update..."
+        echo "Payload: $PAYLOAD"
+
+        # Send the final JSON payload to the webhook URL
+        curl --silent --show-error --fail -X POST \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" \
+        "${{ env.BOT_WEBHOOK_URL }}"
+
