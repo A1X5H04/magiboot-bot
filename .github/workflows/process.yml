@@ -3,34 +3,134 @@ name: Process Video for Bootanimation
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: 'URL of video to process'
+      video:
+        description: '[FileID or URL] Video to process'
         required: true
       other_metadata:
         description: '[JSON] Other metadata'
         required: false
 
+
+env:
+  BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
+  STORAGE_PROVIDER_API_KEY: ${{ secrets.STORAGE_PROVIDER_API_KEY }}
+
 jobs:
-  process:
+   # =====================================================================================
+  # JOB 1: SETUP
+  # - Parses metadata, validates inputs, and downloads the video file.
+  # - Uploads the video as an artifact for the next job.
+  # =====================================================================================
+  setup:
+    name: "Phase 1: Setup & Download"
     runs-on: ubuntu-latest
+    outputs:
+      metadata: ${{ steps.parse_metadata.outputs.json_string }}
+
     steps:
-      - name: Checkout
+      - name: "Checkout repository"
         uses: actions/checkout@v4
 
-      - name: Parse JSON input
-        id: parse
-        run: |
-          if [ -n "${{ github.event.inputs.other_metadata }}" ]; then
-            echo '${{ github.event.inputs.other_metadata }}' | jq -r '
-              to_entries | .[] | "export \(.key)=\(.value)"' >> $GITHUB_ENV
-          else
-            echo "No other_metadata provided"
-          fi
-        
-      - name: Output variables
-        run: |
-          echo ${{ github.event.inputs.video_url }}
-          echo "${{ github.event.inputs.other_metadata }}"
+      - name: "Install dependencies"
+        run: sudo apt-get update && sudo apt-get install -y jq
 
+      - name: "Make scripts executable"
+        run: chmod +x scripts/*.sh
+
+      - name: "Parse metadata and set as output"
+        id: parse_metadata
+        run: |
+          METADATA_JSON='${{ inputs.other_metadata }}'
+          echo "json_string=${METADATA_JSON}" >> "$GITHUB_OUTPUT"
           
+      - name: "Send 'Setup Started' status"
+        run: ./scripts/send_status.sh "processing" "🚀 Workflow initiated. Setting up environment..." '${{ steps.parse_metadata.outputs.json_string }}'
 
+      - name: "Download video file"
+        id: download
+        run: |
+          VIDEO_INPUT="${{ inputs.video_file }}"
+          OUTPUT_FILENAME="video.mp4"
+
+          # Check if the input is a URL or a Telegram File ID
+          if [[ "$VIDEO_INPUT" == http* ]]; then
+            echo "Input is a URL. Downloading..."
+            curl -L -o "$OUTPUT_FILENAME" "$VIDEO_INPUT"
+          else
+            echo "Input is a Telegram File ID. Downloading..."
+            FILE_PATH=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${VIDEO_INPUT}" | jq -r .result.file_path)
+            if [ -z "$FILE_PATH" ] || [ "$FILE_PATH" == "null" ]; then
+              echo "Error: Could not retrieve file path from Telegram API."
+              exit 1
+            fi
+            curl -s "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}" -o "$OUTPUT_FILENAME"
+          fi
+          
+          echo "video_path=${OUTPUT_FILENAME}" >> "$GITHUB_OUTPUT"
+          echo "✅ Video downloaded successfully as ${OUTPUT_FILENAME}"
+
+      - name: "Upload video as artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-file
+          path: ${{ steps.download.outputs.video_path }}
+          retention-days: 1
+
+      - name: "Handle failure"
+        if: failure()
+        run: ./scripts/send_status.sh "error" "❌ An error occurred during the setup phase." '${{ steps.parse_metadata.outputs.json_string }}'
+        
+  # =====================================================================================
+  # JOB 2: PROCESSING
+  # - Runs in a dedicated ffmpeg container.
+  # - Downloads the video artifact from the 'setup' job.
+  # - Processes the video into a directory of bootanimation parts.
+  # - Uploads the parts directory as an artifact for the next job.
+  # =====================================================================================
+  processing:
+    name: "Phase 2: Process Video"
+    runs-on: ubuntu-latest
+    needs: setup
+    container: jrottenberg/ffmpeg:4.4-ubuntu # Use a container with ffmpeg pre-installed
+
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+        
+      - name: "Download video artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: video-file
+      
+      # This step now runs on the host via the composite action, not in the container.
+      - name: "Send 'Processing Started' status"
+        uses: ./.github/actions/send-status
+        with:
+          status: "processing"
+          message: "🎬 Video processing has started..."
+          metadata: ${{ needs.setup.outputs.metadata }}
+
+      - name: "Create bootanimation parts"
+        id: create_boot
+        run: |
+          # The ffmpeg container doesn't have our scripts by default, so we need to make them executable again.
+          chmod +x scripts/*.sh
+          # This script takes the video and creates a directory of parts.
+          RESULT_PATH=$(./scripts/create_bootanimation.sh video.mp4)
+          echo "bootanimation_path=${RESULT_PATH}" >> "$GITHUB_OUTPUT"
+      
+      - name: "Upload bootanimation parts as artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootanimation-parts
+          path: ${{ steps.create_boot.outputs.bootanimation_path }}
+          retention-days: 1
+
+      - name: "Handle failure"
+        if: failure()
+        uses: ./.github/actions/send-status
+        with:
+          status: "error"
+          message: "❌ An error occurred during video processing."
+          metadata: ${{ needs.setup.outputs.metadata }}
