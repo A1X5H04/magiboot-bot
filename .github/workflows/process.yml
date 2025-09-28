@@ -62,7 +62,7 @@ jobs:
         with:
           status: "processing"
           message: "🚀 Workflow initiated. Setting up environment..."
-          tg_metadata: ${{ steps.parse_metadata.outputs.json_string }}
+          msg_metadata: '{ "chat_id": "${{ needs.setup.outputs.metadata.chatId }}", "message_id": "${{ needs.setup.outputs.metadata.messageId }}"}'
           progress: 5
 
       - name: "Download video file"
@@ -119,7 +119,7 @@ jobs:
         with:
           status: "processing"
           message: "🎬 Video processing has started..."
-          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          msg_metadata: '{ "chat_id": "${{ needs.setup.outputs.metadata.chatId }}", "message_id": "${{ needs.setup.outputs.metadata.messageId }}"}'
           progress: 25
 
       - name: "Create bootanimation parts"
@@ -174,7 +174,7 @@ jobs:
         with:
           status: "processing"
           message: "📦 Packaging the flashable module..."
-          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          msg_metadata: '{ "chat_id": "${{ needs.setup.outputs.metadata.chatId }}", "message_id": "${{ needs.setup.outputs.metadata.messageId }}"}'
           progress: 65
 
       - name: "Package the flashable module"
@@ -225,7 +225,7 @@ jobs:
         with:
           status: "processing"
           message: "☁️ Uploading module to storage..."
-          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          msg_metadata: '{ "chat_id": "${{ needs.setup.outputs.metadata.chatId }}", "message_id": "${{ needs.setup.outputs.metadata.messageId }}"}'
           progress: 85
 
       - name: "Upload module and get download link"
@@ -241,7 +241,7 @@ jobs:
         with:
           status: "processing"
           message: "✅ Upload complete. Finalizing post..."
-          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          msg_metadata: '{ "chat_id": "${{ needs.setup.outputs.metadata.chatId }}", "message_id": "${{ needs.setup.outputs.metadata.messageId }}"}'
           progress: 100
 
       - name: "Prepare final post metadata"
@@ -278,7 +278,7 @@ jobs:
         with:
           status: "completed"
           message: "✅ Success! Your bootanimation is ready."
-          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          msg_metadata: '{ "chat_id": "${{ needs.setup.outputs.metadata.chatId }}", "message_id": "${{ needs.setup.outputs.metadata.messageId }}"}'
           post_metadata: ${{ steps.post_data.outputs.json_string }}
 
   # =====================================================================================
@@ -301,5 +301,5 @@ jobs:
         with:
           status: "failed"
           message: "❌ An error occurred during the workflow. Please check the logs."
-          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          msg_metadata: '{ "chat_id": "${{ needs.setup.outputs.metadata.chatId }}", "message_id": "${{ needs.setup.outputs.metadata.messageId }}"}'
 
