@@ -6,10 +6,7 @@ import { CustomContext } from '../types/context';
 import commandComposer from './commands';
 
 async function initBot(env: Env) {
-    
-
     const bot = new Bot<CustomContext>(env.BOT_TOKEN, { botInfo: JSON.parse(env.BOT_INFO) });
-
 
     // Extend context with environment
     bot.use((ctx, next) => {
