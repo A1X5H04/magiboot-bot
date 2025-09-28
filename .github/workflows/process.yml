@@ -7,17 +7,17 @@ on:
         description: '[FileID or URL] Video to process'
         required: true
       other_metadata:
-        description: '[JSON] Other metadata'
+        description: '[JSON] Other metadata including {chatId, messageId, userId, title, creator}'
         required: false
 
-
 env:
+  # These secrets must be configured in your repository's settings
   BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
+  TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
   STORAGE_PROVIDER_API_KEY: ${{ secrets.STORAGE_PROVIDER_API_KEY }}
 
 jobs:
-   # =====================================================================================
+  # =====================================================================================
   # JOB 1: SETUP
   # - Parses metadata, validates inputs, and downloads the video file.
   # - Uploads the video as an artifact for the next job.
@@ -33,104 +33,273 @@ jobs:
         uses: actions/checkout@v4
 
       - name: "Install dependencies"
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: sudo apt-get update && sudo apt-get install -y jq curl
 
-      - name: "Make scripts executable"
+      - name: "Make all scripts executable"
         run: chmod +x scripts/*.sh
 
-      - name: "Parse metadata and set as output"
+      - name: "Parse and validate metadata"
         id: parse_metadata
         run: |
+          # We wrap the input in single quotes to handle JSON safely
           METADATA_JSON='${{ inputs.other_metadata }}'
-          echo "json_string=${METADATA_JSON}" >> "$GITHUB_OUTPUT"
-          
+
+          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '
+            {
+              "jobId": .jobId,
+              "chatId": .msg_metadata.chatId,
+              "messageId": .msg_metadata.messageId,
+              "title": .title,
+              "creator": .creator,
+              "ref_message_id": .ref_message_id
+            }
+          ')
+
+          echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
+
       - name: "Send 'Setup Started' status"
-        run: ./scripts/send_status.sh "processing" "🚀 Workflow initiated. Setting up environment..." '${{ steps.parse_metadata.outputs.json_string }}'
+        uses: ./.github/actions/send-status
+        with:
+          status: "processing"
+          message: "🚀 Workflow initiated. Setting up environment..."
+          tg_metadata: ${{ steps.parse_metadata.outputs.json_string }}
+          progress: 5
 
       - name: "Download video file"
         id: download
         run: |
-          VIDEO_INPUT="${{ inputs.video_file }}"
+          VIDEO_INPUT="${{ inputs.video }}"
           OUTPUT_FILENAME="video.mp4"
 
-          # Check if the input is a URL or a Telegram File ID
-          if [[ "$VIDEO_INPUT" == http* ]]; then
-            echo "Input is a URL. Downloading..."
-            curl -L -o "$OUTPUT_FILENAME" "$VIDEO_INPUT"
-          else
-            echo "Input is a Telegram File ID. Downloading..."
-            FILE_PATH=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${VIDEO_INPUT}" | jq -r .result.file_path)
-            if [ -z "$FILE_PATH" ] || [ "$FILE_PATH" == "null" ]; then
-              echo "Error: Could not retrieve file path from Telegram API."
-              exit 1
-            fi
-            curl -s "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}" -o "$OUTPUT_FILENAME"
-          fi
+          echo "Downloading video from URL: $VIDEO_INPUT"
+          curl -L -o "$OUTPUT_FILENAME" "$VIDEO_INPUT"
           
           echo "video_path=${OUTPUT_FILENAME}" >> "$GITHUB_OUTPUT"
           echo "✅ Video downloaded successfully as ${OUTPUT_FILENAME}"
 
-      - name: "Upload video as artifact"
+      - name: "Upload video for next job"
         uses: actions/upload-artifact@v4
         with:
           name: video-file
           path: ${{ steps.download.outputs.video_path }}
           retention-days: 1
 
-      - name: "Handle failure"
-        if: failure()
-        run: ./scripts/send_status.sh "error" "❌ An error occurred during the setup phase." '${{ steps.parse_metadata.outputs.json_string }}'
-        
   # =====================================================================================
   # JOB 2: PROCESSING
-  # - Runs in a dedicated ffmpeg container.
-  # - Downloads the video artifact from the 'setup' job.
-  # - Processes the video into a directory of bootanimation parts.
-  # - Uploads the parts directory as an artifact for the next job.
+  # - Runs in a dedicated ffmpeg container to process the video.
+  # - Uploads the resulting animation parts as an artifact.
   # =====================================================================================
   processing:
     name: "Phase 2: Process Video"
     runs-on: ubuntu-latest
     needs: setup
-    container: jrottenberg/ffmpeg:4.4-ubuntu # Use a container with ffmpeg pre-installed
+    container: jrottenberg/ffmpeg:4.4-ubuntu
+    outputs:
+      boot_output_dir: ${{ steps.create_boot.outputs.boot_output_dir }}
+      boot_video_duration: ${{ steps.create_boot.outputs.boot_video_duration }}
+      boot_video_fps: ${{ steps.create_boot.outputs.boot_video_fps }}
+      boot_video_resolution: ${{ steps.create_boot.outputs.boot_video_resolution }}
+      boot_video_format: ${{ steps.create_boot.outputs.boot_video_format }}
+      boot_bootanimation_resolution: ${{ steps.create_boot.outputs.boot_bootanimation_resolution }}
+      boot_bootanimation_fps: ${{ steps.create_boot.outputs.boot_bootanimation_fps }}
+      boot_bootanimation_module_type: ${{ steps.create_boot.outputs.boot_bootanimation_module_type }}
+
 
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
-        
+
       - name: "Download video artifact"
         uses: actions/download-artifact@v4
         with:
           name: video-file
-      
-      # This step now runs on the host via the composite action, not in the container.
+
       - name: "Send 'Processing Started' status"
         uses: ./.github/actions/send-status
         with:
           status: "processing"
           message: "🎬 Video processing has started..."
-          metadata: ${{ needs.setup.outputs.metadata }}
+          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          progress: 25
 
       - name: "Create bootanimation parts"
         id: create_boot
         run: |
-          # The ffmpeg container doesn't have our scripts by default, so we need to make them executable again.
-          chmod +x scripts/*.sh
-          # This script takes the video and creates a directory of parts.
-          RESULT_PATH=$(./scripts/create_bootanimation.sh video.mp4)
-          echo "bootanimation_path=${RESULT_PATH}" >> "$GITHUB_OUTPUT"
-      
-      - name: "Upload bootanimation parts as artifact"
+          chmod +x scripts/prepare_bootanimation.sh
+          # Append all key=value pairs emitted by the script to GITHUB_OUTPUT
+          scripts/prepare_bootanimation.sh video.mp4 >> "$GITHUB_OUTPUT"
+
+      - name: "Show metadata"
+        run: |
+          echo "Output dir: ${{ steps.create_boot.outputs.boot_output_dir }}"
+          echo "Duration:   ${{ steps.create_boot.outputs.boot_video_duration }}"
+          echo "FPS:        ${{ steps.create_boot.outputs.boot_video_fps }}"
+          echo "Resolution: ${{ steps.create_boot.outputs.boot_video_resolution }}"
+          echo "Format:     ${{ steps.create_boot.outputs.boot_video_format }}"
+          echo "Boot res:   ${{ steps.create_boot.outputs.boot_bootanimation_resolution }}"
+          echo "Boot fps:   ${{ steps.create_boot.outputs.boot_bootanimation_fps }}"
+          echo "Module type:${{ steps.create_boot.outputs.boot_bootanimation_module_type }}"
+
+      - name: "Upload bootanimation parts for next job"
         uses: actions/upload-artifact@v4
         with:
           name: bootanimation-parts
-          path: ${{ steps.create_boot.outputs.bootanimation_path }}
+          path: ${{ steps.create_boot.outputs.boot_output_dir }}
           retention-days: 1
 
-      - name: "Handle failure"
-        if: failure()
+  # =====================================================================================
+  # JOB 3: PACKAGE
+  # - Packages the bootanimation parts into a final flashable module.
+  # - Uploads the final module zip as an artifact.
+  # =====================================================================================
+  package:
+    name: "Phase 3: Package Module"
+    runs-on: ubuntu-latest
+    needs: [setup, processing]
+    outputs:
+      module_filename: ${{ steps.package_module.outputs.filename }}
+
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+
+      - name: "Download bootanimation parts artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: bootanimation-parts
+          path: bootanimation-output
+
+      - name: "Send 'Packaging Started' status"
         uses: ./.github/actions/send-status
         with:
-          status: "error"
-          message: "❌ An error occurred during video processing."
-          metadata: ${{ needs.setup.outputs.metadata }}
+          status: "processing"
+          message: "📦 Packaging the flashable module..."
+          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          progress: 65
+
+      - name: "Package the flashable module"
+        id: package_module
+        run: |
+          chmod +x scripts/package_module.sh
+          MODULE_NAME=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.title')
+          MODULE_CREATOR=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.creator.name')
+      
+          
+          # This script returns the final filename
+          FINAL_FILENAME=$(scripts/package_module.sh \
+            ./bootanimation-output \
+            ./scripts/module_template \
+            --module-name "$MODULE_NAME" \
+            --module-creator "$MODULE_CREATOR")
+          
+          echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
+
+      - name: "Upload final module for next job"
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-module
+          path: ${{ steps.package_module.outputs.filename }}
+          retention-days: 1
+
+  # =====================================================================================
+  # JOB 4: DEPLOY
+  # - Uploads the final module to a storage provider.
+  # - Sends the final "completed" status with the download link.
+  # =====================================================================================
+  deploy:
+    name: "Phase 4: Deploy & Notify"
+    runs-on: ubuntu-latest
+    needs: [setup, package]
+
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+
+      - name: "Download final module artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: final-module
+
+      - name: "Send 'Uploading' status"
+        uses: ./.github/actions/send-status
+        with:
+          status: "processing"
+          message: "☁️ Uploading module to storage..."
+          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          progress: 85
+
+      - name: "Upload module and get download link"
+        id: upload
+        run: |
+          chmod +x scripts/upload_file.sh
+          # This script returns the download link as its only output
+          DOWNLOAD_LINK=$(scripts/upload_file.sh "${{ needs.package.outputs.module_filename }}")
+          echo "download_link=${DOWNLOAD_LINK}" >> "$GITHUB_OUTPUT"
+      
+      - name: "Send 'Finalizing' status at 100%"
+        uses: ./.github/actions/send-status
+        with:
+          status: "processing"
+          message: "✅ Upload complete. Finalizing post..."
+          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          progress: 100
+
+      - name: "Prepare final post metadata"
+        id: post_data
+        run: |
+          # Construct the final post_metadata JSON using jq
+          POST_METADATA=$(jq -n \
+            --argjson base_meta '${{ needs.setup.outputs.metadata }}' \
+            --arg download_url '${{ steps.upload.outputs.download_link }}' \
+            --arg boot_res '${{ needs.processing.outputs.boot_animation_resolution }}' \
+            --arg boot_fps '${{ needs.processing.outputs.boot_animation_fps }}' \
+            --arg boot_type '${{ needs.processing.outputs.boot_animation_module_type }}' \
+            --arg boot_dir '${{ needs.processing.outputs.boot_output_dir }}' \
+            --arg duration '${{ needs.processing.outputs.boot_video_duration }}' \
+            '
+              {
+                "title": $base_meta.title,
+                "creator": $base_meta.creator,
+                "download_url": $download_url,
+                "video": { "file_id": "${{ inputs.video }}", "ref_message_id": $base_meta.ref_message_id },
+                "details": {
+                  "resolution": { "module": $boot_res, "video": null },
+                  "fps": ($boot_fps | tonumber),
+                  "duration": $duration,
+                  "type": $boot_type
+                }
+              }
+            '
+          )
+          echo "json_string=${POST_METADATA}" >> "$GITHUB_OUTPUT"
+
+      - name: "Send 'Completed' status"
+        uses: ./.github/actions/send-status
+        with:
+          status: "completed"
+          message: "✅ Success! Your bootanimation is ready."
+          tg_metadata: ${{ needs.setup.outputs.metadata }}
+          post_metadata: ${{ steps.post_data.outputs.json_string }}
+
+  # =====================================================================================
+  # JOB 5: HANDLE FAILURE
+  # - This job only runs if any of the previous jobs fail.
+  # - It sends a single, clear failure notification.
+  # =====================================================================================
+  handle-failure:
+    name: "Handle Failure"
+    runs-on: ubuntu-latest
+    needs: [setup, processing, package, deploy]
+    if: failure() && !cancelled()
+
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+        
+      - name: "Send Failure Notification"
+        uses: ./.github/actions/send-status
+        with:
+          status: "failed"
+          message: "❌ An error occurred during the workflow. Please check the logs."
+          tg_metadata: ${{ needs.setup.outputs.metadata }}
+
