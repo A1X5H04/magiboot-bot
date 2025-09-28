@@ -1,6 +1,7 @@
 import { webhookCallback } from 'grammy';
 import { Env } from './types/cloudflare';
 import initBot from './core/bot';
+import handleStatus from './webhooks/status';
 
 export default {
   async fetch(
@@ -11,11 +12,15 @@ export default {
     const url = new URL(request.url);
 
     try {
-
+      
       const bot = await initBot(env)
 
+      if (url.pathname === "/webhooks/status") {
+        return await handleStatus(bot, request);
+      }
 
-      if (url.pathname === "/tg-webhooks") {
+
+      if (url.pathname === "/webhooks/tg") {
         const handleRequest = webhookCallback(bot, 'cloudflare-mod');
         return await handleRequest(request);
       }
