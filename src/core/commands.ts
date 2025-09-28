@@ -1,13 +1,13 @@
 import { Composer } from "grammy";
 import { CustomContext } from "../types/context";
-import {  handleGroupCreateCommand } from "../features/bootanimation/handlers";
-import { handleStartCommand } from "../features/general/handlers";
+import { handleGroupCreateCommand } from "../handlers/bootanimation";
+
 
 const commandsComposer = new Composer<CustomContext>()
 
 
 // General Commands
-commandsComposer.command("start", handleStartCommand)
+commandsComposer.command("start", (ctx) => ctx.reply("You called start command."))
 commandsComposer.command("help", (ctx) => ctx.reply("You called help command."))
 
 
