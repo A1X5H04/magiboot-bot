@@ -166,6 +166,9 @@ dist
 !.env.example
 .wrangler/
 
+# act
+.secrets
+
 # misc
 backup/
 print_filestructure.sh
