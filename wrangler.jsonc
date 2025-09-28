@@ -26,7 +26,7 @@
 	"d1_databases": [
 		{
 			"database_name": "magiboot-db",
-			"binding": "D1_DB",
+			"binding": "MAGIBOOT_DB",
 			"database_id": "e9b05532-4511-4582-b6dd-de0d1970aade"
 		}
 	],
