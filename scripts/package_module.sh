@@ -1,64 +1,134 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status.
-set -e
+# ==============================================================================
+#
+#  Boot Animation Module Packager (with Flags)
+#
+#  This script packages a boot animation into a flashable module, using flags
+#  for metadata and generating a name-based final zip file.
+#
+#  It returns the final module filename as its standard output.
+#
+# ==============================================================================
 
-# --- Configuration ---
-# These paths are relative to the repository root where the workflow runs.
-MODULE_TEMPLATE_DIR="scripts/module"
-INPUT_ANIMATION="bootanimation.zip"
-STAGING_DIR="staging"
+# --- Strict Mode ---
+set -eo pipefail
 
-# --- Validation ---
-# Ensure a Job ID was passed as the first argument.
-if [ -z "$1" ]; then
-  echo "Error: Job ID not provided."
-  echo "Usage: ./package_module.sh <jobId>"
+# --- Helper Functions ---
+
+##
+# Logs an informational message to stderr.
+#
+log_info() {
+  echo "INFO: $1" >&2
+}
+
+##
+# Logs an error message to stderr and exits with a non-zero status.
+#
+log_error() {
+  echo "❌ ERROR: $1" >&2
   exit 1
-fi
+}
 
-if [ ! -f "$INPUT_ANIMATION" ]; then
-    echo "Error: Input file '$INPUT_ANIMATION' not found."
-    exit 1
-fi
+##
+# Prints usage information and exits.
+#
+usage() {
+  log_error "Usage: $0 <source_dir> <template_dir> --module-name \"Name\" --module-creator \"Creator\""
+  exit 1
+}
 
-if [ ! -d "$MODULE_TEMPLATE_DIR" ]; then
-    echo "Error: Module template directory '$MODULE_TEMPLATE_DIR' not found."
-    exit 1
-fi
+# --- Main Execution ---
 
-JOB_ID=$1
-FINAL_MODULE_NAME="MagiBoot-Animation-${JOB_ID}.zip"
+main() {
+  # --- 1. Argument Validation ---
+  if [[ $# -lt 4 ]]; then
+    usage
+  fi
 
-echo "📦 Starting module packaging..."
+  local BOOTANIMATION_SOURCE_DIR="$1"
+  local MODULE_TEMPLATE_DIR="$2"
+  shift 2 # Consume the positional arguments, leaving the flags
 
-# --- Assembly ---
-# 1. Create a clean staging directory.
-rm -rf "$STAGING_DIR"
-mkdir -p "$STAGING_DIR"
-echo "  > Created staging directory."
+  if [ ! -d "$BOOTANIMATION_SOURCE_DIR" ]; then
+    log_error "Boot animation source directory not found at '$BOOTANIMATION_SOURCE_DIR'"
+  fi
+  if [ ! -d "$MODULE_TEMPLATE_DIR" ]; then
+    log_error "Module template directory not found at '$MODULE_TEMPLATE_DIR'"
+  fi
 
-# 2. Copy the module template files into the staging area.
-cp "$MODULE_TEMPLATE_DIR"/config.sh "$STAGING_DIR"/
-cp "$MODULE_TEMPLATE_DIR"/module.prop "$STAGING_DIR"/
-cp "$MODULE_TEMPLATE_DIR"/customize.sh "$STAGING_DIR"/
-cp "$MODULE_TEMPLATE_DIR"/uninstall.sh "$STAGING_DIR"/
-echo "  > Copied module template."
+  # --- 2. Parse Flags ---
+  local NEW_MODULE_NAME=""
+  local NEW_MODULE_CREATOR=""
 
-# 3. Source the config file to get the target animation filename.
-source "$MODULE_TEMPLATE_DIR/config.sh"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --module-name)
+        NEW_MODULE_NAME="$2"
+        shift 2
+        ;;
+      --module-creator)
+        NEW_MODULE_CREATOR="$2"
+        shift 2
+        ;;
+      *)
+        log_error "Unknown flag: $1"
+        usage
+        ;;
+    esac
+  done
 
-# 4. Move the generated bootanimation into the staging area with the correct name.
-mv "$INPUT_ANIMATION" "$STAGING_DIR/$BOOTANIMATION_FILE"
-echo "  > Added bootanimation as '$BOOTANIMATION_FILE'."
+  # Validate that flags were provided
+  if [[ -z "$NEW_MODULE_NAME" || -z "$NEW_MODULE_CREATOR" ]]; then
+    log_error "Both --module-name and --module-creator flags are required."
+    usage
+  fi
 
-# 5. Create the final flashable zip from the staging directory's contents.
-# The `(cd ...)` command ensures the files are at the root of the zip archive.
-(cd "$STAGING_DIR" && zip -r9 ../"$FINAL_MODULE_NAME" .) > /dev/null
-echo "  > Compressed final module."
+  # --- 3. Setup Workspace & Filename ---
+  local TEMP_DIR
+  TEMP_DIR=$(mktemp -d)
+  trap 'rm -rf "$TEMP_DIR"' EXIT
+  
+  log_info "🚀 Starting module packaging process for '$NEW_MODULE_NAME'..."
 
-echo "✅ Successfully packaged module: $FINAL_MODULE_NAME"
+  # Sanitize the module name to create a safe filename
+  local SAFE_FILENAME
+  SAFE_FILENAME=$(echo "$NEW_MODULE_NAME" | tr ' ' '-' | tr -dc '[:alnum:]_-')
+  local FINAL_MODULE_NAME="${SAFE_FILENAME}-magiboot.zip"
 
-# --- Output ---
-# Print the final filename to standard output so the GitHub Action can capture it.
-echo "$FINAL_MODULE_NAME"
+  # --- 4. Create bootanimation.zip ---
+  log_info "Creating bootanimation.zip with store compression (-0)..."
+  local BOOTANIMATION_ZIP_PATH="$TEMP_DIR/bootanimation.zip"
+  (cd "$BOOTANIMATION_SOURCE_DIR" && zip -0qr "$BOOTANIMATION_ZIP_PATH" .) || log_error "Failed to create bootanimation.zip"
+
+  # --- 5. Assemble and Configure the Module ---
+  log_info "Assembling the flashable module..."
+  local STAGING_DIR="$TEMP_DIR/staging"
+  mkdir -p "$STAGING_DIR"
+  cp "$MODULE_TEMPLATE_DIR"/* "$STAGING_DIR"/
+  
+  log_info "Applying dynamic configuration..."
+  local CONFIG_FILE_PATH="$STAGING_DIR/config.sh"
+  sed -i "s/^MODULE_NAME=.*/MODULE_NAME=\"$NEW_MODULE_NAME\"/" "$CONFIG_FILE_PATH"
+  sed -i "s/^MODULE_CREATOR=.*/MODULE_CREATOR=\"$NEW_MODULE_CREATOR\"/" "$CONFIG_FILE_PATH"
+  
+  # shellcheck source=/dev/null
+  source "$CONFIG_FILE_PATH"
+  
+  mv "$BOOTANIMATION_ZIP_PATH" "$STAGING_DIR/$BOOTANIMATION_FILE"
+  log_info "Added bootanimation to module as '$BOOTANIMATION_FILE'."
+
+  # --- 6. Create the Final Module Zip ---
+  log_info "Compressing the final module zip..."
+  (cd "$STAGING_DIR" && zip -r9q "../$FINAL_MODULE_NAME" .) || log_error "Failed to package the final module zip."
+  mv "$TEMP_DIR/$FINAL_MODULE_NAME" .
+
+  log_info "✅ Successfully packaged module: $FINAL_MODULE_NAME"
+
+  # --- 7. Return the Final Filename ---
+  echo "$FINAL_MODULE_NAME"
+}
+
+# Run the main function with all provided script arguments
+main "$@"
