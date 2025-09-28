@@ -8,14 +8,8 @@ inputs:
   message:
     description: 'The descriptive message for the status update'
     required: true
-  chat_id:
-    description: 'The Telegram chat ID'
-    required: true
-  message_id:
-    description: 'The Telegram message ID'
-    required: true
-  user_id:
-    description: 'The Telegram user ID'
+  msg_metadata:
+    description: 'The Telegram message metadata'
     required: true
   data:
     description: 'A JSON string for completed statuses (e.g., post metadata)'
@@ -27,206 +21,82 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: "Prepare and send status webhook"
+    - name: "Validate inputs"
+      shell: bash
+      run: |
+        set -e
+        
+        if [[ -z "${{ inputs.msg_metadata }}"]]; then
+          echo "❌ Error: msg_metadata is required" >&2
+          exit 1
+        fi
+
+        echo "${{ inputs.msg_metadata }}" | jq -e . >/dev/null || { echo "echo_metadata must be a valid JSON object" >&2; exit 1; }
+
+        CHAT_ID=$(echo "${{ inputs.msg_metadata }}" | jq -r '.chat_id')
+        MESSAGE_ID=$(echo "${{ inputs.msg_metadata }}" | jq -r '.message_id')
+
+        if [[ -z "$CHAT_ID" || -z "$MESSAGE_ID" ]]; then
+          echo "❌ Error: chat_id and message_id are required" >&2
+          exit 1
+        fi
+
+        echo "chat_id=$CHAT_ID" >> "$GITHUB_OUTPUT"
+        echo "message_id=$MESSAGE_ID" >> "$GITHUB_OUTPUT"
+
+
+    - name: "Generate JSON payload"
       shell: bash
       run: |
         #!/bin/bash
-        # ==============================================================================
-        #
-        #  Webhook Status Notifier (Hybrid Flag/Data Approach)
-        #
-        #  This script uses named flags for common parameters and a --data flag for
-        #  passing complex JSON objects, providing a clean and scalable interface.
-        #
-        #  Dependencies: curl, jq
-        #
-        # ==============================================================================
-        
-        # --- Strict Mode ---
         set -e
-        
-        # --- Helper Functions ---
-        
-        ##
-        # Prints an error message to stderr and exits.
-        #
-        log_error() {
-          echo "❌ Error: $1" >&2
-          exit 1
-        }
-        
-        ##
-        # Prints detailed usage information and exits.
-        #
-        usage() {
-          cat << EOF
-        Usage: $0 <status> [flags...]
-        
-        This script sends a status update to a pre-configured webhook URL.
-        
-        STATUS:
-          pending | failed | processing | completed
-        
-        COMMON FLAGS (Required for all statuses):
-          --chat-id <id>          Telegram chat ID.
-          --message-id <id>       Telegram message ID.
-          --user-id <id>          Telegram user ID.
-          --message <text>        The status message to send.
-        
-        STATUS-SPECIFIC FLAGS:
-          For 'processing':
-            --progress <percent>    A number from 0-100.
-        
-          For 'completed':
-            --data '<json_string>'  A single-quoted JSON string containing the 'post_metadata' object.
-        
-        EXAMPLE (completed):
-          $0 completed --chat-id 123 --message-id 456 --user-id 789 --message "Done!" \\
-            --data '{"title": "My Animation", "creator": {"user_id": 789, "name": "User"}, ...}'
-        
-        REQUIRED ENVIRONMENT VARIABLE:
-          - TELEGRAM_BOT_WEBHOOK_URL: The static webhook URL.
-        EOF
-          exit 1
-        }
-        
-        ##
-        # Checks if jq and curl are installed.
-        #
-        check_dependencies() {
-            command -v jq >/dev/null 2>&1 || log_error "'jq' is not installed. Please install it."
-            command -v curl >/dev/null 2>&1 || log_error "'curl' is not installed. Please install it."
-        }
-        
-        # --- JSON Payload Generation Functions ---
-        
-        ##
-        # Generates the 'tg_metadata' JSON object from arguments.
-        # Arguments: $1:chat_id, $2:message_id, $3:user_id
-        #
-        generate_tg_metadata() {
-          jq -cn \
-            --arg chatId "$1" \
-            --argjson messageId "$2" \
-            --argjson userId "$3" \
-            '{chatId: $chatId, messageId: $messageId, userId: $userId}'
-        }
-        
-        ##
-        # Generates JSON for 'pending' or 'failed' statuses.
-        # Arguments: $1:status, $2:chat_id, $3:msg_id, $4:user_id, $5:message
-        #
-        generate_pending_or_failed_payload() {
-          local tg_metadata
-          tg_metadata=$(generate_tg_metadata "$2" "$3" "$4")
-        
-          jq -cn \
-            --arg status "$1" \
-            --arg message "$5" \
-            --argjson tg_metadata "$tg_metadata" \
-            '{status: $status, message: $message, tg_metadata: $tg_metadata}'
-        }
-        
-        ##
-        # Generates JSON for 'processing' status.
-        # Arguments: $1:chat_id, $2:msg_id, $3:user_id, $4:message, $5:progress
-        #
-        generate_processing_payload() {
-          local tg_metadata
-          tg_metadata=$(generate_tg_metadata "$1" "$2" "$3")
-        
-          jq -cn \
-            --arg status "processing" \
-            --arg message "$4" \
-            --argjson progress "$5" \
-            --argjson tg_metadata "$tg_metadata" \
-            '{status: $status, message: $message, progress: $progress, tg_metadata: $tg_metadata}'
-        }
-        
-        ##
-        # Generates JSON for 'completed' status using a pre-formatted JSON string.
-        # Arguments: $1:chat_id, $2:msg_id, $3:user_id, $4:message, $5:post_metadata_json
-        #
-        generate_completed_payload() {
-          local tg_metadata
-          tg_metadata=$(generate_tg_metadata "$1" "$2" "$3")
-        
-          jq -cn \
-            --arg status "completed" \
-            --arg message "$4" \
-            --argjson tg_metadata "$tg_metadata" \
-            --argjson post_metadata "$5" \
-            '{
-              status: $status,
-              message: $message,
-              tg_metadata: $tg_metadata,
-              post_metadata: $post_metadata
-            }'
-        }
-        
-        
-        ##
-        # Sends the final JSON payload using curl.
-        # Arguments: $1: The JSON payload string
-        #
-        send_notification() {
-          local payload="$1"
-          : "${TELEGRAM_BOT_WEBHOOK_URL?Error: TELEGRAM_BOT_WEBHOOK_URL environment variable is not set.}"
-        
-          echo "▶️ Sending payload to webhook..."
-          
-          curl --silent --show-error --fail \
-               -X POST -H "Content-Type: application/json" \
-               -d "$payload" \
-               "${TELEGRAM_BOT_WEBHOOK_URL}"
-          
-          echo "✅ Notification sent successfully."
-        }
-        
-        # --- Main Logic ---
-        
-        check_dependencies
-        
-        # The script's main logic is now encapsulated in this section.
-        # We need to call the functions directly with the composite action inputs.
-        
-        # Use placeholders for the composite action inputs
+
         STATUS_TYPE="${{ inputs.status }}"
-        CHAT_ID="${{ inputs.chat_id }}"
-        MESSAGE_ID="${{ inputs.message_id }}"
-        USER_ID="${{ inputs.user_id }}"
         MESSAGE="${{ inputs.message }}"
         PROGRESS="${{ inputs.progress }}"
         DATA_JSON="${{ inputs.data }}"
-        
-        # --- Validation and Execution ---
-        JSON_PAYLOAD=""
-        
-        # Validate that common required flags are present
-        if [[ -z "$CHAT_ID" || -z "$MESSAGE_ID" || -z "$USER_ID" || -z "$MESSAGE" ]]; then
-          log_error "Missing one or more common required flags: --chat-id, --message-id, --user-id, --message"
-          usage
-        fi
-        
+        CHAT_ID="${{ steps.validate.outputs.chat_id }}"
+        MESSAGE_ID="${{ steps.validate.outputs.message_id }}"
+
         case "$STATUS_TYPE" in
           pending|failed)
-            JSON_PAYLOAD=$(generate_pending_or_failed_payload "$STATUS_TYPE" "$CHAT_ID" "$MESSAGE_ID" "$USER_ID" "$MESSAGE")
+            PAYLOAD=$(jq -n \
+              --arg status "$STATUS_TYPE" \
+              --arg message "$MESSAGE" \
+              --argjson tg_metadata '{"chatId": '"$CHAT_ID"', "messageId": '"$MESSAGE_ID"'}' \
+              '{status: $status, message: $message, tg_metadata: $tg_metadata}')
             ;;
-          
           processing)
-            if [[ -z "$PROGRESS" ]]; then log_error "Missing required flag for 'processing' status: --progress"; usage; fi
-            JSON_PAYLOAD=$(generate_processing_payload "$CHAT_ID" "$MESSAGE_ID" "$USER_ID" "$MESSAGE" "$PROGRESS")
+            PAYLOAD=$(jq -n \
+              --arg status "processing" \
+              --arg message "$MESSAGE" \
+              --argjson progress "$PROGRESS" \
+              --argjson tg_metadata '{"chatId": '"$CHAT_ID"', "messageId": '"$MESSAGE_ID"'}' \
+              '{status: $status, message: $message, progress: $progress, tg_metadata: $tg_metadata}')
             ;;
-        
           completed)
-            if [[ -z "$DATA_JSON" ]]; then log_error "Missing required flag for 'completed' status: --data"; usage; fi
-            # Validate that the --data content is valid JSON
-            echo "$DATA_JSON" | jq -e . >/dev/null || log_error "The value passed to --data is not valid JSON."
-            JSON_PAYLOAD=$(generate_completed_payload "$CHAT_ID" "$MESSAGE_ID" "$USER_ID" "$MESSAGE" "$DATA_JSON")
+            PAYLOAD=$(jq -n \
+              --arg status "completed" \
+              --arg message "$MESSAGE" \
+              --argjson post_metadata "$DATA_JSON" \
+              --argjson tg_metadata '{"chatId": '"$CHAT_ID"', "messageId": '"$MESSAGE_ID"'}' \
+              '{status: $status, message: $message, tg_metadata: $tg_metadata, post_metadata: $post_metadata}')
             ;;
-        
           *)
-            log_error "Invalid status type: '$STATUS_TYPE'"; usage ;;
+            echo "Invalid status: $STATUS_TYPE" >&2
+            exit 1
+            ;;
         esac
-        
-        send_notification "$JSON_PAYLOAD"
+
+        echo "payload=$PAYLOAD" >> "$GITHUB_OUTPUT"
+
+    - name: "Send payload to webhook"
+      shell: bash
+      run: |
+        set -e
+        : "${TELEGRAM_BOT_WEBHOOK_URL?Webhook URL must be set}"
+        curl --silent --show-error --fail \
+            -X POST -H "Content-Type: application/json" \
+            -d "${{ steps.prepare_payload.outputs.payload }}" \
+            "$TELEGRAM_BOT_WEBHOOK_URL"
+        echo "Notification sent successfully."
