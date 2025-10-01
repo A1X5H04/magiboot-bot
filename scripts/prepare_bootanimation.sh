@@ -60,7 +60,7 @@ check_dependencies() {
 # and returns its properties as a space-separated string.
 #
 # @param $1 Path to the input video file.
-# @return A string "FPS TARGET_WIDTH TARGET_HEIGHT" on success.
+# @return A string "FPS TARGET_WIDTH TARGET_HEIGHT DURATION FORMAT RESOLUTION" on success.
 ##
 validate_and_get_properties() {
   local input_video="$1"
@@ -70,15 +70,16 @@ validate_and_get_properties() {
   fi
 
   # Read all properties in one efficient ffprobe call
-  local width fps_fraction duration size_bytes format
+  local width height fps_fraction duration size_bytes format
   {
     read -r width
+    read -r height
     read -r fps_fraction
     read -r duration
     read -r size_bytes
     read -r format
   } < <(ffprobe -v error -select_streams v:0 \
-    -show_entries stream=width,r_frame_rate,duration \
+    -show_entries stream=width,height,r_frame_rate,duration \
     -show_entries format=size,format_name \
     -of default=nw=1:nk=1 "$input_video")
 
@@ -109,12 +110,13 @@ validate_and_get_properties() {
   fps=$(printf "%.0f" "$fps_value")
   target_width=$(echo "$TARGET_RESOLUTION" | cut -d':' -f1)
   target_height=$(echo "$TARGET_RESOLUTION" | cut -d':' -f2)
-  resolution="${width}x$(echo "$TARGET_RESOLUTION" | cut -d':' -f2)"
+  # Correctly format the original video resolution string
+  resolution="${width}x${height}"
 
-  log_info "Validation passed. Duration=$duration, FPS=$fps, Resolution=${width}x${target_height}, Format=$format."
+  log_info "Validation passed. Duration=$duration, FPS=$fps, Resolution=${resolution}, Format=$format."
     
   # Return values by printing them to stdout for the calling function to capture
-    echo "$fps $target_width $target_height $duration $format $resolution"
+  echo "$fps $target_width $target_height $duration $format $resolution"
 }
 
 ##
@@ -131,11 +133,12 @@ extract_frames() {
   local part_dir="$output_dir/part0"
   mkdir -p "$part_dir"
 
-  ffmpeg -v error -i "$input_video" \
-         -vf "scale=$TARGET_RESOLUTION,setsar=1" \
+  ffmpeg -v error -hwaccel auto -i "$input_video" \
+         -vf "scale=$TARGET_RESOLUTION,setsar=1,format=yuvj420p" \
+         -q:v 2 \
          -an \
          -y \
-         "$part_dir/%05d.png"
+         "$part_dir/%05d.jpg"
   
   log_info "Frame extraction complete."
 }
