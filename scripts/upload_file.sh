@@ -51,7 +51,9 @@ check_dependencies() {
 create_upload_url() {
   log_info "Requesting secure upload URL..."
   local api_response
-  api_response=$(curl --silent --show-error --location "${BASE_URL}api.php?action=create_upload_url")
+  api_response=$(curl --silent --show-error --location \
+    --header "X-API-Key: ${STORAGE_PROVIDER_API_KEY}" \
+    "${BASE_URL}api.php?action=create_upload_url")
 
   # Use jq's -e flag to exit with an error if '.success' is not true
   echo "$api_response" | jq -e '.success == true' >/dev/null || log_error "Failed to get upload URL. API Response: $api_response"
@@ -84,6 +86,7 @@ upload_file() {
   mime_type=$(file --brief --mime-type "$file_path")
   log_info "Detected MIME type: $mime_type"
 
+  # The pre-signed URL for the PUT request does not require the API key header.
   curl --silent --show-error --fail \
        --request PUT "$upload_url" \
        --header "Content-Type: $mime_type" \
@@ -115,6 +118,7 @@ finalize_upload() {
   final_response=$(curl --silent --show-error --location \
                         --request POST "${BASE_URL}api.php?action=finalize_upload" \
                         --header "Content-Type: application/json" \
+                        --header "X-API-Key: ${STORAGE_PROVIDER_API_KEY}" \
                         --data "$json_payload")
 
   echo "$final_response" | jq -e '.success == true' >/dev/null || log_error "Failed to finalize upload. API Response: $final_response"
@@ -135,6 +139,10 @@ finalize_upload() {
 
 main() {
   check_dependencies
+
+  if [[ -z "$STORAGE_PROVIDER_API_KEY" ]]; then
+    log_error "Environment variable 'STORAGE_PROVIDER_API_KEY' is not set."
+  fi
 
   if [[ -z "$1" ]]; then
     log_error "No file path provided. Usage: $0 /path/to/your/file"
