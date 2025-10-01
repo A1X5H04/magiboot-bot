@@ -24,24 +24,31 @@ runs:
     - name: "Validate Inputs"
       id: validate
       shell: bash
+      # Safely map all action inputs to environment variables
+      env:
+        INPUT_STATUS: ${{ inputs.status }}
+        INPUT_MSG_METADATA: ${{ inputs.msg_metadata }}
+        INPUT_DATA: ${{ inputs.data }}
+        INPUT_PROGRESS: ${{ inputs.progress }}
       run: |
         # Exit immediately if a command exits with a non-zero status.
         set -e
 
         # --- Basic Validations ---
-        if [[ -z "${{ inputs.msg_metadata }}" ]]; then
+        if [[ -z "$INPUT_MSG_METADATA" ]]; then
           echo "❌ Error: msg_metadata is required." >&2
           exit 1
         fi
 
-        if ! echo "${{ inputs.msg_metadata }}" | jq -e . >/dev/null; then
+        # Validate JSON by echoing the environment variable
+        if ! echo "$INPUT_MSG_METADATA" | jq -e . >/dev/null; then
           echo "❌ Error: msg_metadata must be a valid JSON object." >&2
           exit 1
         fi
         
         # --- Extract and Validate Metadata ---
-        CHAT_ID=$(echo "${{ inputs.msg_metadata }}" | jq -r '.chat_id')
-        MESSAGE_ID=$(echo "${{ inputs.msg_metadata }}" | jq -r '.message_id')
+        CHAT_ID=$(echo "$INPUT_MSG_METADATA" | jq -r '.chat_id')
+        MESSAGE_ID=$(echo "$INPUT_MSG_METADATA" | jq -r '.message_id')
 
         if [[ -z "$CHAT_ID" || "$CHAT_ID" == "null" || -z "$MESSAGE_ID" || "$MESSAGE_ID" == "null" ]]; then
           echo "❌ Error: msg_metadata must contain non-null 'chat_id' and 'message_id' keys." >&2
@@ -49,19 +56,21 @@ runs:
         fi
         
         # --- Conditional Validations based on status ---
-        case "${{ inputs.status }}" in
+        case "$INPUT_STATUS" in
           processing)
-            if [[ -z "${{ inputs.progress }}" ]]; then
+            if [[ -z "$INPUT_PROGRESS" ]]; then
               echo "❌ Error: 'progress' input is required for 'processing' status." >&2
               exit 1
             fi
             ;;
           completed)
-            if [[ -z "${{ inputs.data }}" ]]; then
+            if [[ -z "$INPUT_DATA" ]]; then
               echo "❌ Error: 'data' input is required for 'completed' status." >&2
               exit 1
             fi
-            if ! echo "${{ inputs.data }}" | jq -e . >/dev/null; then
+            
+            # This is the corrected line, now reading from a safe environment variable
+            if ! echo "$INPUT_DATA" | jq -e . >/dev/null; then
               echo "❌ Error: 'data' input must be a valid JSON string for 'completed' status." >&2
               exit 1
             fi
@@ -75,16 +84,23 @@ runs:
     - name: "Generate JSON Payload"
       id: generate_payload
       shell: bash
+      env:
+        # Map all necessary inputs and prior step outputs to env vars
+        INPUT_STATUS: ${{ inputs.status }}
+        INPUT_MESSAGE: ${{ inputs.message }}
+        INPUT_CHAT_ID: ${{ steps.validate.outputs.chat_id }}
+        INPUT_MESSAGE_ID: ${{ steps.validate.outputs.message_id }}
+        INPUT_PROGRESS: ${{ inputs.progress }}
+        INPUT_DATA: ${{ inputs.data }}
       run: |
         set -e
 
-        # Build the base JSON payload with common fields
-        # This approach safely handles numeric IDs and avoids string injection issues.
+        # Build the base JSON payload using the safe env vars
         BASE_PAYLOAD=$(jq -n \
-          --arg status "${{ inputs.status }}" \
-          --arg message "${{ inputs.message }}" \
-          --argjson chatId "${{ steps.validate.outputs.chat_id }}" \
-          --argjson messageId "${{ steps.validate.outputs.message_id }}" \
+          --arg status "$INPUT_STATUS" \
+          --arg message "$INPUT_MESSAGE" \
+          --argjson chatId "$INPUT_CHAT_ID" \
+          --argjson messageId "$INPUT_MESSAGE_ID" \
           '{
             status: $status,
             message: $message,
@@ -94,27 +110,25 @@ runs:
             }
           }')
 
-        # Conditionally add fields to the payload based on the status
-        case "${{ inputs.status }}" in
+        # Conditionally add fields to the payload
+        case "$INPUT_STATUS" in
           processing)
-            # Add the 'progress' field
-            PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson progress "${{ inputs.progress }}" '. + {progress: $progress}')
+            PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson progress "$INPUT_PROGRESS" '. + {progress: $progress}')
             ;;
           completed)
-            # Add the 'post_metadata' field
-            PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson data "${{ inputs.data }}" '. + {post_metadata: $data}')
+            # Safely parse the data using --argjson instead of --arg and fromjson
+            PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson data "$INPUT_DATA" '. + {post_metadata: $data}')
             ;;
           pending|failed)
-            # No additional fields are needed
             PAYLOAD="$BASE_PAYLOAD"
             ;;
           *)
-            echo "❌ Error: Invalid status '${{ inputs.status }}' encountered." >&2
+            echo "❌ Error: Invalid status '$INPUT_STATUS' encountered." >&2
             exit 1
             ;;
         esac
 
-        echo "payload=$PAYLOAD" >> "$GITHUB_OUTPUT"
+        echo "payload=$(echo "$PAYLOAD" | jq -c '.')" >> "$GITHUB_OUTPUT"
 
     - name: "Send Payload to Webhook"
       id: send_payload
