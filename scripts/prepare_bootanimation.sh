@@ -178,10 +178,10 @@ main() {
 
   check_dependencies
 
-  # Create a secure temporary directory for the output. This is the only
-  # "side effect" and its path is the script's return value.
-  local output_dir
-  output_dir=$(mktemp -d)
+  # Create a predictable output directory in the current working directory
+  # instead of a random temporary one.
+  local output_dir="bootanimation-output"
+  mkdir -p "$output_dir"
 
   # Validate video and capture its properties into local variables
   local properties_string
