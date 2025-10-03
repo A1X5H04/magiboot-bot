@@ -1,6 +1,6 @@
-id=magiboot-dynamic
-name=MagiBoot Dynamic Animation
+id=magiboot-bootanimation-module
+name=MagiBoot Bootanimation Module
 version=v1.0
 versionCode=1
 author=A1X5H04
-description=A dynamic bootanimation that works on Magisk and KernelSU.
+description=A module to change your bootanimation.
