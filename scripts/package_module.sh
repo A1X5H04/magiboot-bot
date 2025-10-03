@@ -106,7 +106,7 @@ main() {
   log_info "Assembling the flashable module..."
   local STAGING_DIR="$TEMP_DIR/staging"
   mkdir -p "$STAGING_DIR"
-  cp "$MODULE_TEMPLATE_DIR"/* "$STAGING_DIR"/
+  cp -r "$MODULE_TEMPLATE_DIR"/* "$STAGING_DIR"/
   
    log_info "Applying dynamic configuration to module.prop..."
   local MODULE_PROP_PATH="$STAGING_DIR/module.prop"
