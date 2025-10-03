@@ -89,92 +89,92 @@ jobs:
   # - Immediately packages the output into the final flashable module.
   # =====================================================================================
   process_and_package:
-  name: "Phase 2 & 3: Process & Package"
-  runs-on: ubuntu-latest
-  needs: setup
-  outputs:
-    module_filename: ${{ steps.package_module.outputs.filename }}
-    boot_video_duration: ${{ steps.create_boot.outputs.boot_video_duration }}
-    boot_video_fps: ${{ steps.create_boot.outputs.boot_video_fps }}
-    boot_video_resolution: ${{ steps.create_boot.outputs.boot_video_resolution }}
-    boot_bootanimation_resolution: ${{ steps.create_boot.outputs.boot_bootanimation_resolution }}
-    boot_bootanimation_module_type: ${{ steps.create_boot.outputs.boot_bootanimation_module_type }}
+    name: "Phase 2 & 3: Process & Package"
+    runs-on: ubuntu-latest
+    needs: setup
+    outputs:
+      module_filename: ${{ steps.package_module.outputs.filename }}
+      boot_video_duration: ${{ steps.create_boot.outputs.boot_video_duration }}
+      boot_video_fps: ${{ steps.create_boot.outputs.boot_video_fps }}
+      boot_video_resolution: ${{ steps.create_boot.outputs.boot_video_resolution }}
+      boot_bootanimation_resolution: ${{ steps.create_boot.outputs.boot_bootanimation_resolution }}
+      boot_bootanimation_module_type: ${{ steps.create_boot.outputs.boot_bootanimation_module_type }}
 
-  steps:
-    - name: "Checkout repository"
-      uses: actions/checkout@v4
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
 
-    - name: "Install jq"
-      uses: dcarbone/install-jq-action@v2
+      - name: "Install jq"
+        uses: dcarbone/install-jq-action@v2
 
-    - name: "Cache FFmpeg Docker image"
-      id: cache-ffmpeg
-      uses: actions/cache@v4
-      with:
-        path: docker-image-cache
-        key: ${{ runner.os }}-ffmpeg-4.4-ubuntu
+      - name: "Cache FFmpeg Docker image"
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: docker-image-cache
+          key: ${{ runner.os }}-ffmpeg-4.4-ubuntu
 
-    - name: "Load or Pull FFmpeg image"
-      run: |
-        mkdir -p docker-image-cache
-        if [ -f docker-image-cache/ffmpeg.tar ]; then
-          echo "Loading FFmpeg from cache..."
-          docker load -i docker-image-cache/ffmpeg.tar
-        else
-          echo "Pulling FFmpeg from registry..."
-          docker pull jrottenberg/ffmpeg:4.4-ubuntu
-          docker save jrottenberg/ffmpeg:4.4-ubuntu -o docker-image-cache/ffmpeg.tar
-        fi
+      - name: "Load or Pull FFmpeg image"
+        run: |
+          mkdir -p docker-image-cache
+          if [ -f docker-image-cache/ffmpeg.tar ]; then
+            echo "Loading FFmpeg from cache..."
+            docker load -i docker-image-cache/ffmpeg.tar
+          else
+            echo "Pulling FFmpeg from registry..."
+            docker pull jrottenberg/ffmpeg:4.4-ubuntu
+            docker save jrottenberg/ffmpeg:4.4-ubuntu -o docker-image-cache/ffmpeg.tar
+          fi
 
-    - name: "Download video artifact"
-      uses: actions/download-artifact@v4
-      with:
-        name: video-artifact
+      - name: "Download video artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: video-artifact
 
-    - name: "Send 'Processing Started' status"
-      uses: ./.github/actions/send-status
-      env:
-        TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-      with:
-        status: "processing"
-        message: "🎬 Video processing has started..."
-        msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
-        progress: 25
+      - name: "Send 'Processing Started' status"
+        uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
+        with:
+          status: "processing"
+          message: "🎬 Video processing has started..."
+          msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
+          progress: 25
 
-    - name: "Create bootanimation parts using FFmpeg container"
-      id: create_boot
-      run: |
-        chmod +x scripts/prepare_bootanimation.sh
-        OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir jrottenberg/ffmpeg:4.4-ubuntu ./scripts/prepare_bootanimation.sh video.mp4)
-        echo "$OUTPUT_STRING" >> "$GITHUB_OUTPUT"
-        BOOT_DIR=$(echo "$OUTPUT_STRING" | grep 'boot_output_dir=' | cut -d'=' -f2)
-        echo "boot_output_dir_path=${BOOT_DIR}" >> "$GITHUB_OUTPUT"
+      - name: "Create bootanimation parts using FFmpeg container"
+        id: create_boot
+        run: |
+          chmod +x scripts/prepare_bootanimation.sh
+          OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir jrottenberg/ffmpeg:4.4-ubuntu ./scripts/prepare_bootanimation.sh video.mp4)
+          echo "$OUTPUT_STRING" >> "$GITHUB_OUTPUT"
+          BOOT_DIR=$(echo "$OUTPUT_STRING" | grep 'boot_output_dir=' | cut -d'=' -f2)
+          echo "boot_output_dir_path=${BOOT_DIR}" >> "$GITHUB_OUTPUT"
 
-    - name: "Send 'Packaging Started' status"
-      uses: ./.github/actions/send-status
-      env:
-        TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-      with:
-        status: "processing"
-        message: "📦 Packaging the flashable module..."
-        msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
-        progress: 65
+      - name: "Send 'Packaging Started' status"
+        uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
+        with:
+          status: "processing"
+          message: "📦 Packaging the flashable module..."
+          msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
+          progress: 65
 
-    - name: "Package the flashable module"
-      id: package_module
-      run: |
-        chmod +x scripts/package_module.sh
-        MODULE_NAME=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.title')
-        MODULE_CREATOR=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.creator.name')
-        FINAL_FILENAME=$(scripts/package_module.sh "${{ steps.create_boot.outputs.boot_output_dir_path }}" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
-        echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
+      - name: "Package the flashable module"
+        id: package_module
+        run: |
+          chmod +x scripts/package_module.sh
+          MODULE_NAME=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.title')
+          MODULE_CREATOR=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.creator.name')
+          FINAL_FILENAME=$(scripts/package_module.sh "${{ steps.create_boot.outputs.boot_output_dir_path }}" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
+          echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
 
-    - name: "Upload final module for next job"
-      uses: actions/upload-artifact@v4
-      with:
-        name: final-module-artifact
-        path: ${{ steps.package_module.outputs.filename }}
-        retention-days: 1
+      - name: "Upload final module for next job"
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-module-artifact
+          path: ${{ steps.package_module.outputs.filename }}
+          retention-days: 1
 
 
   # =====================================================================================
