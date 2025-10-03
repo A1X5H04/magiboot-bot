@@ -34,6 +34,8 @@ runs:
         # Exit immediately if a command exits with a non-zero status.
         set -e
 
+        echo "TELEGRAM_BOT_WEBHOOK_URL: $TELEGRAM_BOT_WEBHOOK_URL"
+
         # --- Basic Validations ---
         if [[ -z "$INPUT_MSG_METADATA" ]]; then
           echo "❌ Error: msg_metadata is required." >&2
