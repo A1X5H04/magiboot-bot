@@ -3,11 +3,11 @@ import { Api, Bot, RawApi } from "grammy";
 import { safeParse } from "valibot";
 
 
-import { ExtendedContext } from "../types/context";
+import { AppContext } from "../types/context";
 import { createBootanimationPost, createStatusMessage } from "../lib/message";
 import { statusUpdateSchema } from "../schema/webhook-status";
 
-export default async function handleStatus(bot: Bot<ExtendedContext, Api<RawApi>>, request: Request) {
+export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, request: Request) {
     if (request.method !== "POST") {
         return new Response("Method Not Allowed", { status: 405 });
     }
@@ -47,7 +47,7 @@ export default async function handleStatus(bot: Bot<ExtendedContext, Api<RawApi>
             caption: postCaption.text,
             caption_entities: postCaption.entities
         })
-
+        
     }
 
     return new Response("OK", { status: 200 });

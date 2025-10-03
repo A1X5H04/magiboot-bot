@@ -2,10 +2,11 @@ import { Context as GrammyContext } from 'grammy';
 import { Env } from "./cloudflare";
 
 // Extend the base context with our custom properties
+export interface ExtendedCtxData {
+  env: Env;
+}
 
-export interface ExtendedContext extends GrammyContext {
-    env: Env
-}    
+interface ExtendedContext extends GrammyContext, ExtendedCtxData {}  
 
 
-export type CustomContext = ExtendedContext;
+export type AppContext = ExtendedContext;
