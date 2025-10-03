@@ -6,13 +6,6 @@
 #  specialized, dependent jobs. This multi-job approach improves efficiency
 #  and maintainability compared to a single-job configuration.
 #
-#  Workflow Stages:
-#  1. Setup:         Validates inputs and downloads the video.
-#  2. Process Video: Uses a dedicated FFmpeg container to create animation parts.
-#  3. Package Module: Zips the animation parts into a flashable module.
-#  4. Deploy:        Uploads the final module and sends a success notification.
-#  5. Notify Failure: A dedicated job that runs only if any stage fails.
-#
 # ==============================================================================
 
 name: Process Video for Bootanimation
@@ -28,16 +21,13 @@ on:
         required: false
 
 env:
-  # These secrets must be configured in your repository's settings
   BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
   STORAGE_PROVIDER_API_KEY: ${{ secrets.STORAGE_PROVIDER_API_KEY }}
 
 jobs:
   # =====================================================================================
   # JOB 1: SETUP
   # - Parses metadata, validates inputs, and downloads the video file.
-  # - Uploads the video as an artifact for the next job.
   # =====================================================================================
   setup:
     name: "Phase 1: Setup & Download"
@@ -57,17 +47,15 @@ jobs:
         id: parse_metadata
         run: |
           METADATA_JSON='${{ inputs.other_metadata }}'
-          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '
-            { "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id }
-          ')
-          MSG_METADATA=$(echo "${METADATA_JSON}" | jq -c '
-            { "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }
-          ')
+          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id }')
+          MSG_METADATA=$(echo "${METADATA_JSON}" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
           echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
           echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
 
       - name: "Send 'Setup Started' status"
         uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
         with:
           status: "processing"
           message: "🚀 Workflow initiated. Setting up environment..."
@@ -82,8 +70,7 @@ jobs:
           BOT_TOKEN="${{ env.BOT_TOKEN }}"
           API_RESPONSE=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${FILE_ID}")
           if [[ "$(echo "$API_RESPONSE" | jq -r '.ok')" != "true" ]]; then
-            echo "❌ Telegram API Error: $(echo "$API_RESPONSE" | jq -r '.description')" >&2
-            exit 1
+            echo "❌ Telegram API Error: $(echo "$API_RESPONSE" | jq -r '.description')" >&2; exit 1
           fi
           FILE_PATH=$(echo "$API_RESPONSE" | jq -r '.result.file_path')
           curl -s -L -o "video.mp4" "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}"
@@ -97,15 +84,16 @@ jobs:
           retention-days: 1
 
   # =====================================================================================
-  # JOB 2: PROCESS VIDEO
-  # - Runs in a dedicated ffmpeg container to process the video.
+  # JOB 2: PROCESS & PACKAGE (MERGED)
+  # - Processes the video using an FFmpeg container.
+  # - Immediately packages the output into the final flashable module.
   # =====================================================================================
-  process_video:
-    name: "Phase 2: Process Video"
+  process_and_package:
+    name: "Phase 2 & 3: Process & Package"
     runs-on: ubuntu-latest
     needs: setup
-    container: jrottenberg/ffmpeg:4.4-ubuntu
     outputs:
+      module_filename: ${{ steps.package_module.outputs.filename }}
       boot_video_duration: ${{ steps.create_boot.outputs.boot_video_duration }}
       boot_video_fps: ${{ steps.create_boot.outputs.boot_video_fps }}
       boot_video_resolution: ${{ steps.create_boot.outputs.boot_video_resolution }}
@@ -116,6 +104,14 @@ jobs:
       - name: "Checkout repository"
         uses: actions/checkout@v4
 
+      - name: "Install dependencies on host (jq)"
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: "Cache FFmpeg Docker image"
+        uses: crazy-max/ghaction-docker-cache@v1
+        with:
+          image: jrottenberg/ffmpeg:4.4-ubuntu
+
       - name: "Download video artifact"
         uses: actions/download-artifact@v4
         with:
@@ -123,48 +119,27 @@ jobs:
 
       - name: "Send 'Processing Started' status"
         uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
         with:
           status: "processing"
           message: "🎬 Video processing has started..."
           msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
           progress: 25
 
-      - name: "Create bootanimation parts"
+      - name: "Create bootanimation parts using FFmpeg container"
         id: create_boot
         run: |
           chmod +x scripts/prepare_bootanimation.sh
-          scripts/prepare_bootanimation.sh video.mp4 >> "$GITHUB_OUTPUT"
-
-      - name: "Upload bootanimation parts for next job"
-        uses: actions/upload-artifact@v4
-        with:
-          name: bootanimation-parts
-          path: ${{ steps.create_boot.outputs.boot_output_dir }}
-          retention-days: 1
-
-  # =====================================================================================
-  # JOB 3: PACKAGE MODULE
-  # - Packages the bootanimation parts into a final flashable module.
-  # =====================================================================================
-  package_module:
-    name: "Phase 3: Package Module"
-    runs-on: ubuntu-latest
-    needs: [setup, process_video]
-    outputs:
-      module_filename: ${{ steps.package_module.outputs.filename }}
-
-    steps:
-      - name: "Checkout repository"
-        uses: actions/checkout@v4
-
-      - name: "Download bootanimation parts artifact"
-        uses: actions/download-artifact@v4
-        with:
-          name: bootanimation-parts
-          path: bootanimation-output
+          OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir jrottenberg/ffmpeg:4.4-ubuntu ./scripts/prepare_bootanimation.sh video.mp4)
+          echo "$OUTPUT_STRING" >> "$GITHUB_OUTPUT"
+          BOOT_DIR=$(echo "$OUTPUT_STRING" | grep 'boot_output_dir=' | cut -d'=' -f2)
+          echo "boot_output_dir_path=${BOOT_DIR}" >> "$GITHUB_OUTPUT"
 
       - name: "Send 'Packaging Started' status"
         uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
         with:
           status: "processing"
           message: "📦 Packaging the flashable module..."
@@ -177,7 +152,7 @@ jobs:
           chmod +x scripts/package_module.sh
           MODULE_NAME=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.title')
           MODULE_CREATOR=$(echo '${{ needs.setup.outputs.metadata }}' | jq -r '.creator.name')
-          FINAL_FILENAME=$(scripts/package_module.sh ./bootanimation-output ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
+          FINAL_FILENAME=$(scripts/package_module.sh "${{ steps.create_boot.outputs.boot_output_dir_path }}" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
           echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
 
       - name: "Upload final module for next job"
@@ -188,13 +163,13 @@ jobs:
           retention-days: 1
 
   # =====================================================================================
-  # JOB 4: DEPLOY
+  # JOB 3: DEPLOY
   # - Uploads the final module and sends the "completed" status.
   # =====================================================================================
   deploy:
     name: "Phase 4: Deploy & Notify"
     runs-on: ubuntu-latest
-    needs: [setup, process_video, package_module]
+    needs: [setup, process_and_package]
 
     steps:
       - name: "Checkout repository"
@@ -207,6 +182,8 @@ jobs:
 
       - name: "Send 'Uploading' status"
         uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
         with:
           status: "processing"
           message: "☁️ Uploading module to storage..."
@@ -217,11 +194,13 @@ jobs:
         id: upload
         run: |
           chmod +x scripts/upload_file.sh
-          DOWNLOAD_LINK=$(scripts/upload_file.sh "${{ needs.package_module.outputs.module_filename }}")
+          DOWNLOAD_LINK=$(scripts/upload_file.sh "${{ needs.process_and_package.outputs.module_filename }}")
           echo "download_link=${DOWNLOAD_LINK}" >> "$GITHUB_OUTPUT"
       
       - name: "Send 'Finalizing' status"
         uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
         with:
           status: "processing"
           message: "✅ Upload complete. Finalizing post..."
@@ -234,11 +213,11 @@ jobs:
           POST_METADATA=$(jq -n -c \
             --argjson base_meta '${{ needs.setup.outputs.metadata }}' \
             --arg download_url '${{ steps.upload.outputs.download_link }}' \
-            --arg video_res '${{ needs.process_video.outputs.boot_video_resolution }}' \
-            --arg boot_res '${{ needs.process_video.outputs.boot_bootanimation_resolution }}' \
-            --arg boot_fps '${{ needs.process_video.outputs.boot_video_fps }}' \
-            --arg boot_type '${{ needs.process_video.outputs.boot_bootanimation_module_type }}' \
-            --arg duration '${{ needs.process_video.outputs.boot_video_duration }}' \
+            --arg video_res '${{ needs.process_and_package.outputs.boot_video_resolution }}' \
+            --arg boot_res '${{ needs.process_and_package.outputs.boot_bootanimation_resolution }}' \
+            --arg boot_fps '${{ needs.process_and_package.outputs.boot_video_fps }}' \
+            --arg boot_type '${{ needs.process_and_package.outputs.boot_bootanimation_module_type }}' \
+            --arg duration '${{ needs.process_and_package.outputs.boot_video_duration }}' \
             '
               {
                 "title": $base_meta.title,
@@ -258,6 +237,8 @@ jobs:
 
       - name: "Send 'Completed' status"
         uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
         with:
           status: "completed"
           message: "✅ Success! Your bootanimation is ready."
@@ -265,13 +246,13 @@ jobs:
           data: ${{ steps.post_data.outputs.post_metadata }}
 
   # =====================================================================================
-  # JOB 5: NOTIFY FAILURE
+  # JOB 4: NOTIFY FAILURE
   # - This job only runs if any of the previous jobs in the chain fail.
   # =====================================================================================
   notify_failure:
     name: "Notify on Failure"
     runs-on: ubuntu-latest
-    needs: [setup, process_video, package_module, deploy]
+    needs: [setup, process_and_package, deploy]
     if: failure() && !cancelled()
 
     steps:
@@ -280,7 +261,10 @@ jobs:
         
       - name: "Send Failure Notification"
         uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
         with:
           status: "failed"
           message: "An error occurred during the workflow. Please report to @a1x5h04"
           msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
+
