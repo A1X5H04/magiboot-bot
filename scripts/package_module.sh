@@ -108,16 +108,25 @@ main() {
   mkdir -p "$STAGING_DIR"
   cp "$MODULE_TEMPLATE_DIR"/* "$STAGING_DIR"/
   
-  log_info "Applying dynamic configuration..."
-  local CONFIG_FILE_PATH="$STAGING_DIR/config.sh"
-  sed -i "s/^MODULE_NAME=.*/MODULE_NAME=\"$NEW_MODULE_NAME\"/" "$CONFIG_FILE_PATH"
-  sed -i "s/^MODULE_CREATOR=.*/MODULE_CREATOR=\"$NEW_MODULE_CREATOR\"/" "$CONFIG_FILE_PATH"
+   log_info "Applying dynamic configuration to module.prop..."
+  local MODULE_PROP_PATH="$STAGING_DIR/module.prop"
   
-  # shellcheck source=/dev/null
-  source "$CONFIG_FILE_PATH"
+  if [ ! -f "$MODULE_PROP_PATH" ]; then
+    log_error "The module template directory must contain a 'module.prop' file."
+  fi
   
-  mv "$BOOTANIMATION_ZIP_PATH" "$STAGING_DIR/$BOOTANIMATION_FILE"
-  log_info "Added bootanimation to module as '$BOOTANIMATION_FILE'."
+  # Combine name and creator for the 'name' field as requested
+  local NEW_DESCRIPTION="A custom bootanimation module by Magiboot. Animation By: $NEW_MODULE_CREATOR."
+  
+  # Update the module.prop file using sed
+  # Using '|' as a separator for sed to handle special characters in names
+  sed -i "s|^name=.*|name=$NEW_MODULE_NAME|" "$MODULE_PROP_PATH"
+  sed -i "s|^author=.*|author=a1x5h04|" "$MODULE_PROP_PATH"
+  sed -i "s|^description=.*|description=$NEW_DESCRIPTION|" "$MODULE_PROP_PATH"
+  
+  # Place the bootanimation.zip into the module's root
+  mv "$BOOTANIMATION_ZIP_PATH" "$STAGING_DIR/bootanimation.zip"
+  log_info "Added bootanimation.zip to the module."
 
   # --- 6. Create the Final Module Zip ---
   log_info "Compressing the final module zip..."
