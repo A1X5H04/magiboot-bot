@@ -1,6 +1,7 @@
-id=magiboot-bootanimation-module
-name=MagiBoot Bootanimation Module
+id=Magiboot-Module
+name=Magiboot Bootanimation Module
 version=v1.0
 versionCode=1
 author=A1X5H04
-description=A module to change your bootanimation.
+description=A dynamic bootanimation module from @magiboot
+
