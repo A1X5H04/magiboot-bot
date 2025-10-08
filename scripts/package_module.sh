@@ -124,8 +124,8 @@ main() {
   sed -i "s|^author=.*|author=a1x5h04|" "$MODULE_PROP_PATH"
   sed -i "s|^description=.*|description=$NEW_DESCRIPTION|" "$MODULE_PROP_PATH"
   
-  # Place the bootanimation.zip into the module's root
-  mv "$BOOTANIMATION_ZIP_PATH" "$STAGING_DIR/bootanimation.zip"
+  # Place the bootanimation.zip into the magiboot folder.
+  mv "$BOOTANIMATION_ZIP_PATH" "$STAGING_DIR/common/magiboot/bootanimation.zip"
   log_info "Added bootanimation.zip to the module."
 
   # --- 6. Create the Final Module Zip ---
