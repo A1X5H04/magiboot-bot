@@ -47,7 +47,7 @@ jobs:
         id: parse_metadata
         run: |
           METADATA_JSON='${{ inputs.other_metadata }}'
-          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id }')
+          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id }')
           MSG_METADATA=$(echo "${METADATA_JSON}" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
           echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
           echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
@@ -240,7 +240,7 @@ jobs:
                 "title": $base_meta.title,
                 "creator": { "user_id": $base_meta.creator.id, "name": $base_meta.creator.name },
                 "download_url": $download_url,
-                "video": { "file_id": "${{ inputs.video }}", "ref_message_id": $base_meta.ref_message_id },
+                "video": { "file_id": "${{ inputs.video }}", "file_unique_id": $base_meta.unique_file_id, "ref_message_id": $base_meta.ref_message_id },
                 "details": {
                   "resolution": { "module": $boot_res, "video": $video_res },
                   "fps": ($boot_fps | tonumber),
@@ -286,4 +286,3 @@ jobs:
           message: "An error occurred during the workflow. Please report to @a1x5h04"
           job_id: ${{ fromJson(needs.setup.outputs.metadata).jobId }}
           msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
-
