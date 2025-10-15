@@ -20,7 +20,6 @@
 # ==============================================================================
 
 # --- Configuration ---
-TARGET_RESOLUTION="1080:1920" # Target Portrait 1080p resolution
 MAX_DURATION=25               # Max video duration in seconds
 MAX_WIDTH=3840                # Max video width (4K)
 MAX_FPS=60                    # Max video framerate
@@ -108,8 +107,8 @@ validate_and_get_properties() {
   # Prepare properties for return
   local fps target_width target_height resolution
   fps=$(printf "%.0f" "$fps_value")
-  target_width=$(echo "$TARGET_RESOLUTION" | cut -d':' -f1)
-  target_height=$(echo "$TARGET_RESOLUTION" | cut -d':' -f2)
+  target_width='1080'
+  target_height='1920'
   # Correctly format the original video resolution string
   resolution="${width}x${height}"
 
@@ -134,7 +133,7 @@ extract_frames() {
   mkdir -p "$part_dir"
 
   ffmpeg -v error -hwaccel auto -i "$input_video" \
-         -vf "scale=$TARGET_RESOLUTION,setsar=1,format=yuvj420p" \
+         -vf "scale=720:-1,setsar=1,format=yuvj420p" \
          -q:v 2 \
          -an \
          -y \
