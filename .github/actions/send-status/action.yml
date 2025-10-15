@@ -11,6 +11,9 @@ inputs:
   msg_metadata:
     description: 'The Telegram message metadata as a JSON string (must contain chat_id and message_id)'
     required: true
+  job_id:
+    description: 'An optional job identifier to include in the payload'
+    required: false
   data:
     description: 'A JSON string for "completed" status (e.g., post metadata)'
     required: false
@@ -92,6 +95,7 @@ runs:
         INPUT_MESSAGE: ${{ inputs.message }}
         INPUT_CHAT_ID: ${{ steps.validate.outputs.chat_id }}
         INPUT_MESSAGE_ID: ${{ steps.validate.outputs.message_id }}
+        INPUT_JOB_ID: ${{ inputs.job_id }}
         INPUT_PROGRESS: ${{ inputs.progress }}
         INPUT_DATA: ${{ inputs.data }}
       run: |
@@ -120,9 +124,15 @@ runs:
           completed)
             # Safely parse the data using --argjson instead of --arg and fromjson
             PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson data "$INPUT_DATA" '. + {post_metadata: $data}')
+            if [[ -n "$INPUT_JOB_ID" ]]; then
+              PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+            fi
             ;;
           pending|failed)
             PAYLOAD="$BASE_PAYLOAD"
+            if [[ -n "$INPUT_JOB_ID" ]]; then
+              PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+            fi
             ;;
           *)
             echo "❌ Error: Invalid status '$INPUT_STATUS' encountered." >&2

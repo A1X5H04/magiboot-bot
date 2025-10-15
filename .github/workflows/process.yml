@@ -259,6 +259,7 @@ jobs:
         with:
           status: "completed"
           message: "✅ Success! Your bootanimation is ready."
+          job_id: ${{ fromJson(needs.setup.outputs.metadata).jobId }}
           msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
           data: ${{ steps.post_data.outputs.post_metadata }}
 
@@ -283,5 +284,6 @@ jobs:
         with:
           status: "failed"
           message: "An error occurred during the workflow. Please report to @a1x5h04"
+          job_id: ${{ fromJson(needs.setup.outputs.metadata).jobId }}
           msg_metadata: ${{ needs.setup.outputs.msg_metadata }}
 
