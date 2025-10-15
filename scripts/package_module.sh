@@ -108,7 +108,7 @@ main() {
   mkdir -p "$STAGING_DIR"
   cp -r "$MODULE_TEMPLATE_DIR"/* "$STAGING_DIR"/
   
-   log_info "Applying dynamic configuration to module.prop..."
+  log_info "Applying dynamic configuration to module.prop..."
   local MODULE_PROP_PATH="$STAGING_DIR/module.prop"
   
   if [ ! -f "$MODULE_PROP_PATH" ]; then
@@ -125,6 +125,7 @@ main() {
   sed -i "s|^description=.*|description=$NEW_DESCRIPTION|" "$MODULE_PROP_PATH"
   
   # Place the bootanimation.zip into the magiboot folder.
+  mkdir -p "$STAGING_DIR/common/magiboot/" # Create directory if doesn't exist.
   mv "$BOOTANIMATION_ZIP_PATH" "$STAGING_DIR/common/magiboot/bootanimation.zip"
   log_info "Added bootanimation.zip to the module."
 
