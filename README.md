@@ -1,97 +1,88 @@
-# MagiBoot Bot
+Of course. Here is a minimal `README.md` tailored to your project's description and stack.
 
-A Telegram bot for managing boot configurations, built with TypeScript and Cloudflare Workers.
+-----
 
-## Features
+# Telegram Boot Animation Bot
 
-- `/start` - Welcome message and bot introduction
-- `/help` - Show available commands and usage
-- `/create` - Create a new boot configuration (placeholder)
+A Telegram bot that converts videos into boot animation modules using a serverless, queue-based architecture.
+
+This project offloads heavy video processing to GitHub Actions, allowing the bot to remain lightweight and scalable. Requests are managed via a database queue system.
+
+## How It Works
+
+1.  A user sends a video to the Telegram bot.
+2.  The request is validated and added to a job queue in a Turso database.
+3.  A GitHub Action is triggered to process the queue.
+4.  The Action worker pulls a job, downloads the video, and uses FFmpeg to convert it into a PNG sequence.
+5.  The PNGs are packaged into a boot animation module (`bootanimation.zip`).
+6.  The completed module is sent back to the user via Telegram.
+
+## Tech Stack
+
+  - **Runtime**: Deno
+  - **Platform**: Netlify Edge Functions
+  - **Database**: Turso (using LibSQL)
+  - **Compute**: GitHub Actions
+  - **Video Processing**: FFmpeg
 
 ## Prerequisites
 
-- Node.js 18 or later
-- npm or pnpm
-- Cloudflare account
-- Telegram Bot Token from [@BotFather](https://t.me/botfather)
+  - Deno 1.x
+  - Netlify Account
+  - Turso Account
+  - GitHub Account (for Actions)
+  - Telegram Bot Token from [@BotFather](https://t.me/botfather)
 
 ## Getting Started
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd magiboot-bot
-   ```
+1.  **Clone the repository:**
 
-2. Install dependencies:
-   ```bash
-   pnpm install
-   # or
-   npm install
-   ```
+    ```bash
+    git clone <repository-url>
+    cd <repository-name>
+    ```
 
-3. Copy the example environment file and update with your details:
-   ```bash
-   cp wrangler.example.toml wrangler.toml
-   # Edit wrangler.toml with your bot token
-   ```
+2.  **Set up environment variables:**
+    Copy the example environment file and fill in your details.
 
-4. Start the development server:
-   ```bash
-   pnpm dev
-   # or
-   npm run dev
-   ```
+    ```bash
+    cp .env.example .env
+    ```
 
-5. Set up webhook (in a new terminal):
-   ```bash
-   curl -F "url=<your-ngrok-or-public-url>" https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook
-   ```
+3.  **Start the development server:**
+    The Netlify CLI will run the Deno server for you.
 
-## Development
+    ```bash
+    netlify dev
+    ```
 
-- `pnpm dev` - Start development server
-- `pnpm test` - Run tests
-- `pnpm deploy` - Deploy to Cloudflare Workers
+4.  **Set up the Telegram webhook:**
+    In a new terminal, link your deployed URL to your Telegram bot.
+
+    ```bash
+    curl -F "url=<your-netlify-or-ngrok-url>" https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook
+    ```
 
 ## Environment Variables
 
-Create a `wrangler.toml` file with the following content:
+Create a `.env` file with the following variables:
 
-```toml
-name = "magiboot-bot"
-main = "src/index.ts"
-compatibility_date = "2025-08-07"
-compatibility_flags = ["nodejs_compat"]
+```env
+# Your Telegram bot token from @BotFather
+BOT_TOKEN="your-telegram-bot-token-here"
 
-[vars]
-ENVIRONMENT = "development"
+# Turso database URL
+TURSO_DB_URL="your-turso-database-url"
 
-[build]
-command = "npm run build"
+# Turso database authentication token
+TURSO_DB_AUTH_TOKEN="your-turso-auth-token"
 
-[dev]
-ip = "0.0.0.0"
-local_protocol = "http"
-
-# Add your bot token here
-[[vars]]
-name = "BOT_TOKEN"
-value = "your-telegram-bot-token-here"
-```
-
-## Project Structure
-
-```
-src/
-├── commands/      # Command handlers
-├── handlers/      # Message and callback handlers
-├── lib/           # Utility functions and types
-├── services/      # Business logic services
-├── repository/    # Database operations (placeholder)
-└── database/      # Database schema and migrations (placeholder)
+# GitHub token to trigger actions (if needed)
+GITHUB_TOKEN="your-github-personal-access-token"
 ```
 
 ## License
 
 MIT
+
+> Written by A.I
