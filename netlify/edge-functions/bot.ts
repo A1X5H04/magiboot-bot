@@ -13,7 +13,8 @@ export default async function handler(req: Request) {
     if (url.pathname === "/bot/reset-webhook") {
       try {
         await bot.api.deleteWebhook({ drop_pending_updates: true })
-        await bot.api.setWebhook("https://unmilked-holily-contessa.ngrok-free.app/bot/tg-webhook")
+        
+        await bot.api.setWebhook(`${Deno.env.get("NETLIFY_BASE_URL")}/bot/tg-webhook`)
 
         return new Response("Webhook reset!", { status: 201 });
 
