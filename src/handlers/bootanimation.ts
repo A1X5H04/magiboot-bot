@@ -1,9 +1,12 @@
-import { CustomContext } from "../types/context";
-import { createStatusMessage } from "../lib/message";
-import { addJobtoQueue } from "../services/ci/queue";
-import { handleJob } from "../services/ci/orchestrator";
+import { AppContext } from "../types/bot.ts";
+import { createDuplicatePostErrorMessage, createStatusMessage } from "../lib/messages.ts";
+import { addJob } from "../services/queue.ts";
+import { handleJob } from "../services/ci/orchestrator.ts";
+import { getPostByNameOrUniqueId } from "../services/post.ts";
+import { TG_GROUP_LINK } from "../lib/constants.ts";
+import { getUserInfo } from "../lib/helpers.ts";
 
-export async function handleGroupCreateCommand(ctx: CustomContext) {
+export async function handleGroupCreateCommand(ctx: AppContext) {
   const repliedMessage = ctx.message?.reply_to_message
   const title = ctx.match
   
@@ -17,24 +20,40 @@ export async function handleGroupCreateCommand(ctx: CustomContext) {
       return;
     }
   
-    let fileId: string | undefined
-  
-    if (repliedMessage.video) {
-      fileId = repliedMessage.video.file_id
-    } else if (repliedMessage.document?.mime_type?.includes("video")) {
-      fileId = repliedMessage.document.file_id
+
+    const file: { id: string | null; unique_id: string | null} = {
+      id: null,
+      unique_id: null
     }
   
-    if (!fileId) {
+    if (repliedMessage.video) {
+      file.id = repliedMessage.video.file_id
+      file.unique_id = repliedMessage.video.file_unique_id
+    } else if (repliedMessage.document?.mime_type?.includes("video")) {
+      file.id = repliedMessage.document.file_id
+      file.unique_id = repliedMessage.document.file_unique_id
+    }
+  
+    if (!file.id || !file.unique_id) {
       ctx.reply("Invalid video format, try again.")
       return;
     }
 
+    const duplicatePost = await getPostByNameOrUniqueId(title as string, file.unique_id)
+
+    if (duplicatePost) {
+      const userInfo = await getUserInfo(ctx.api, TG_GROUP_LINK, duplicatePost.user_id);
+
+      const duplicatePostMessage = createDuplicatePostErrorMessage({ name: duplicatePost.name, message_id: duplicatePost.message_id, user: userInfo });
+
+      ctx.reply(duplicatePostMessage.text, { entities: duplicatePostMessage.entities });
+      return
+    }    
+
     const statusMessage = createStatusMessage({ status: "pending", message: "Your request is queued for processing", progress: undefined})
     
     if (!ctx.chat?.id || !ctx.from?.id) {
-      ctx.reply("Internal error, please try again.")
-      return;
+      throw new Error("Cannot find chatID or UserId");
     }
     
     const message = await ctx.reply(statusMessage.text, { 
@@ -44,18 +63,23 @@ export async function handleGroupCreateCommand(ctx: CustomContext) {
       }
     })
 
-    const { jobId } = await addJobtoQueue(ctx.env, { 
+    const job = await addJob({ 
       chatId: ctx.chat.id,
       creator: {
         id: ctx.from.id,
         name: ctx.from.first_name
       },
       statusMessageId: message.message_id, 
-      videoFileId: fileId, 
+      videoFileId: file.id,
+      uniqueFileId: file.unique_id, 
       title: title as string, 
       videoRefMessageId: repliedMessage.message_id
     })
 
+    if (!job) {
+      throw new Error("[Command: 'b'] No job was returned")
+    }
+
     // Also send job to CI so it picks without needing to wait for the scheduler.
-    await handleJob(ctx.env, jobId);
-}
+    await handleJob(job.id);
+  }

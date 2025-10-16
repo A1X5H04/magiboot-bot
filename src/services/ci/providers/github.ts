@@ -1,17 +1,21 @@
 // ci/github.ts
-import type { CIProvider } from "../../../types/ci";
+import type { CIProvider } from "~/types/ci.ts";
 
 interface GithubProviderConfig {
   owner: string;
   repo: string;
   ref: string;
-  token: string;
+  token: string | undefined;
   workflowId: string;
 }
 
 export const makeGitHubProvider = (config: GithubProviderConfig): CIProvider => {
   const { owner, repo, ref, token, workflowId } = config;
   const baseAPIUrl = `https://api.github.com/repos/${owner}/${repo}/actions`
+
+  if (!token) {
+    throw new Error("[CI-Github]: Token not found!");
+  }
 
 
   const isAvailable: CIProvider["isAvailable"] = async () => {

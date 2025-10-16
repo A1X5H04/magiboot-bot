@@ -1,41 +1,37 @@
-import { JobStatus } from "../types/ci";
-import { Env } from "../types/cloudflare";
+import { Row } from "https://esm.sh/@libsql/client@0.15.15";
 
+export function mapToModel<T>(data: Row): T;
+export function mapToModel<T>(data: Row[]): T[];
+export function mapToModel<T>(data: Row | Row[]): T | T[] {
+    const autoParse = (value: any): any => {
+      
+        if (typeof value === 'string') {
+            if (/^({.*}|\[.*\])$/s.test(value)) {
+                try {
+                    // Recurse on the *result* of the parse.
+                    return autoParse(JSON.parse(value));
+                } catch (error) {
+                    console.error(`[mapToModel] Failed to parse JSON string:`, { value, error });
+                    return value;
+                }
+            }
+        }
 
+        if (Array.isArray(value)) {
+            return value.map(item => autoParse(item));
+        }
 
-type GetFileResponse = {
-  ok: true;
-  result: {
-    file_id: string;
-    file_unique_id: string;
-    file_size: number;
-    file_path: string;
-  }
-} | {
-  ok: false;
-  error_code: number;
-  description: string;
-}
+        if (value && typeof value === 'object' && value.constructor === Object) {
+            return Object.fromEntries(
+                Object.entries(value).map(([key, val]) => [key, autoParse(val)])
+            );
+        }
+        
+        return value;
+    };
 
-
-export async function getFileInfo (env: Env, fileId: string) {
-  const url = `https://api.telegram.org/bot${env.BOT_TOKEN}/getFile?file_id=${fileId}`;
-
-  const res = await fetch(url);
-
-  if (!res.ok) throw new Error(`Failed to get file Info: ${res.status}`);
-
-  const data = await res.json<GetFileResponse>();
-
-  if (!data.ok) {
-    throw new Error(`Failed to get file Info: ${data.description}`);
-  }
-
-  return data.result;
-}
-
-type UpdateMetadata = {
-  chatId: string;
-  userId: string;
-  statusMessageId: number;
+    if (Array.isArray(data)) {
+        return data.map(row => autoParse(row) as T);
+    }
+    return autoParse(data) as T;
 }

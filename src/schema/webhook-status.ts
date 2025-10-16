@@ -1,4 +1,4 @@
-    import * as v from 'valibot';
+    import * as v from 'https://esm.sh/valibot@1.1.0';
 
 
     const tgMetadataSchema = v.object({
@@ -15,6 +15,7 @@
         download_url: v.pipe(v.string(), v.url()),
         video: v.object({
             file_id: v.string(),
+            file_unique_id: v.string(),
             ref_message_id: v.number(),
         }),
         details: v.object({
@@ -32,6 +33,7 @@
     const failedOrPendingSchema = v.object({
         status: v.union([v.literal("failed"), v.literal("pending")]),
         message: v.string(),
+        job_id: v.string(),
         tg_metadata: tgMetadataSchema,
     });
 
@@ -45,6 +47,7 @@
     const completedSchema = v.object({
         status: v.literal("completed"),
         message: v.string(),
+        job_id: v.string(),
         post_metadata: postMetadataSchema,
         tg_metadata: tgMetadataSchema,
     });

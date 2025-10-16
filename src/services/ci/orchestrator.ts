@@ -1,31 +1,26 @@
-import { CIProvider, Job } from "../../types/ci";
-import type { Env } from "../../types/cloudflare";
-import { sendStatusUpdate } from "../../lib/helpers";
-import { getFileInfo } from "../../lib/utils";
-import { makeGitHubProvider } from "./providers/github";
-import { getFirstJob, getJobById, updateJob, updateJobStatus } from "./queue";
+import { sendStatusUpdate } from "../../lib/helpers.ts";
+import { JobQueueModel } from "../../types/models.ts";
+import { JobMetadata } from "../../types/queue.ts";
+import { getJobById, getNextJob, updateJobStatus } from "../queue.ts";
+import { makeGitHubProvider } from "./providers/github.ts";
+import { CIProvider } from "../../types/ci.ts";
 
-
-const getCIProviders = (env: Env): CIProvider[] => {
-    return [
+const CI_PROVIDERS = [
         makeGitHubProvider({
             owner: "A1X5H04",
             repo: "magiboot-bot",
             ref: "master",
             workflowId: "process.yml",
-            token: env.GITHUB_TOKEN,
+            token: Deno.env.get("CI_GITHUB_TOKEN"),
         }),
     ]
-}
 
-export async function handleJob(env: Env, jobId?: string) {
-
-    const ciProviders = getCIProviders(env);
+export async function handleJob(jobId?: string) {
 
     // Find the first available CI provider.
-    // In the future, this is where you'd put a load-balancing algorithm.
+    // In near future add load balancing algorithm.
     let availableProvider: CIProvider | null = null;
-    for (const provider of ciProviders) {
+    for (const provider of CI_PROVIDERS) {
         if (await provider.isAvailable()) {
             availableProvider = provider;
             break; // Found one, stop looking.
@@ -37,12 +32,12 @@ export async function handleJob(env: Env, jobId?: string) {
         return;
     }
 
-    let job: Job | null = null;
+    let job: JobQueueModel | null = null;
 
     if (jobId) {
-        job = await getJobById(env, jobId);
+        job = await getJobById(jobId);
     } else {
-        job = await getFirstJob(env, "pending");
+        job = await getNextJob();
     }
 
     if (!job) {
@@ -50,35 +45,40 @@ export async function handleJob(env: Env, jobId?: string) {
         return;
     }
 
-    await updateJobStatus(env, job.jobId, "processing");
+    await updateJobStatus(job.id, "processing");
+
+    const jobMetadata = job.metadata as unknown as JobMetadata
 
     const dispatchResult = await availableProvider.triggerWorkflow({
-        video: job.fileId,
+        
+        video: jobMetadata.file_id,
         other_metadata: JSON.stringify({
-            jobId: job.jobId,
+            jobId: job.id,
             msg_metadata: {
-                chatId: job.chatId,
-                messageId: job.statusMessageId,
+                chatId: jobMetadata.message.chatId,
+                messageId: jobMetadata.message.messageId,
             },
-            title: job.metadata.title,
-            creator: job.metadata.creator,
-            ref_message_id: job.metadata.video_ref_message_id,
+            unique_file_id: jobMetadata.unique_file_id,
+            title: jobMetadata.title,
+            creator: jobMetadata.creator,
+            ref_message_id: jobMetadata.video_ref_message_id,
         })
     });
 
     if (!dispatchResult.success) {
-        console.log("Failed to dispatch job", job.jobId, dispatchResult.message);
+        console.log("Failed to dispatch job", job.id, dispatchResult.message);
         await sendStatusUpdate({
             status: "failed",
             message: "Your request failed to be processed, try again later.",
+            job_id: job.id,
             tg_metadata: {
-                chatId: job.chatId,
-                messageId: job.statusMessageId,
+                chatId: jobMetadata.message.chatId,
+                messageId: jobMetadata.message.messageId,
             }
         });
 
     } else {
-        console.log(`Job with id ${job.jobId} dispatched successfully.`);
+        console.log(`Job with id ${job.id} dispatched successfully.`);
     }
 
 }

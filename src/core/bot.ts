@@ -1,22 +1,23 @@
-import { Bot} from 'grammy';
-import { Env } from '../types/cloudflare';
+import { Bot } from 'https://esm.sh/grammy';
+import commandsComposer from "./commands.ts";
+import { handleBotErrors } from "../middleware/handle-error.ts";
+import { privateMessageMiddleware } from "../middleware/private-message.ts";
 
-import { AppContext } from '../types/context';
+function initBot() {
+    const botToken = Deno.env.get("BOT_TOKEN")
+    const botInfo = Deno.env.get("BOT_INFO")
 
-import commandComposer from './commands';
-import { privateMessageMiddleware } from '../middlewares/private-message';
-import { extendContextMiddleware } from '../middlewares/extend-ctx';
+    if (!botToken || !botInfo) {
+        throw new Error("Missing credentials (BOT_TOKEN or BOT_INFO)");
+    }
 
-async function initBot(env: Env) {
-    const bot = new Bot<AppContext>(env.BOT_TOKEN, { botInfo: JSON.parse(env.BOT_INFO) });
+    const bot = new Bot(botToken, { botInfo: JSON.parse(botInfo) });
 
-    // Extend context with environment
-    bot.use(extendContextMiddleware({ env }))
     bot.on("message", privateMessageMiddleware);
-    
-    bot.use(commandComposer)
+    bot.use(handleBotErrors)
+    bot.use(commandsComposer)
 
     return bot;
 }
 
-export default initBot
+export { initBot }
