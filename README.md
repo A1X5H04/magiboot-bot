@@ -1,7 +1,3 @@
-Of course. Here is a minimal `README.md` tailored to your project's description and stack.
-
------
-
 # Telegram Boot Animation Bot
 
 A Telegram bot that converts videos into boot animation modules using a serverless, queue-based architecture.
