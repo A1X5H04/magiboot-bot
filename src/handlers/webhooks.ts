@@ -6,6 +6,7 @@ import { createBootanimationPost, createStatusMessage } from "../lib/messages.ts
 import { statusUpdateSchema } from "../schema/webhook-status.ts";
 import { updateJobStatus } from "../services/queue.ts";
 import { createPost } from "../services/post.ts";
+import { TG_CHANNEL_LINK } from "../lib/constants.ts";
 
 export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, request: Request) {
     if (request.method !== "POST") {
@@ -40,7 +41,7 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
     if (validatedData.status === "completed") {
         const postCaption = createBootanimationPost(validatedData.post_metadata)
 
-        bot.api.sendVideo("@testchannelmagiboot", validatedData.post_metadata.video.file_id, {
+        bot.api.sendVideo(TG_CHANNEL_LINK, validatedData.post_metadata.video.file_id, {
             reply_markup: {
                 inline_keyboard: [[
                     { text: "⬇️ Download Module", url: validatedData.post_metadata.download_url }
