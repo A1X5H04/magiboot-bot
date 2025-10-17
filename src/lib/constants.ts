@@ -1,2 +1,2 @@
-export const TG_CHANNEL_LINK = 'MagiBoot'
-export const TG_GROUP_LINK = 'magibootchat'
+export const TG_CHANNEL_ID = '-1001271350681'
+export const TG_GROUP_ID = '-1001466501928'

@@ -3,7 +3,7 @@ import { createDuplicatePostErrorMessage, createStatusMessage } from "../lib/mes
 import { addJob } from "../services/queue.ts";
 import { handleJob } from "../services/ci/orchestrator.ts";
 import { getPostByNameOrUniqueId } from "../services/post.ts";
-import { TG_GROUP_LINK } from "../lib/constants.ts";
+import { TG_GROUP_ID } from "../lib/constants.ts";
 import { getUserInfo } from "../lib/helpers.ts";
 
 export async function handleGroupCreateCommand(ctx: AppContext) {
@@ -42,7 +42,7 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     const duplicatePost = await getPostByNameOrUniqueId(title as string, file.unique_id)
 
     if (duplicatePost) {
-      const userInfo = await getUserInfo(ctx.api, TG_GROUP_LINK, duplicatePost.user_id);
+      const userInfo = await getUserInfo(ctx.api, TG_GROUP_ID, duplicatePost.user_id);
 
       const duplicatePostMessage = createDuplicatePostErrorMessage({ name: duplicatePost.name, message_id: duplicatePost.message_id, user: userInfo });
 
