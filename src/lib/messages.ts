@@ -2,7 +2,6 @@ import { FormattedString } from "https://esm.sh/@grammyjs/parse-mode@2.2.0";
 import { JobStatus } from "../types/queue.ts";
 import { createProgressBar } from "./generators.ts";
 import { PostMetadata } from "../types/schema.ts";
-import { TG_CHANNEL_LINK } from "./constants.ts";
 import { TGUserInfo } from "../types/bot.ts";
 
 type KnownError = Error & {
@@ -98,7 +97,7 @@ export function createDuplicatePostErrorMessage({name, message_id, user}: { name
     return FormattedString.b("🔁 Duplicate Post Detected!").plain("\n\n")
     .b("Post Name: ").plain(name).plain("\n")
     .b("Original Post: ")
-    .link("View Here", `https://t.me/${TG_CHANNEL_LINK}/${message_id}`).plain("\n")
+    .link("View Here", `https://t.me/magiboot/${message_id}`).plain("\n")
     .b("Created By: ")
     .link(user.first_name, `tg://user?id=${user.id}`).plain("\n\n")
     .plain("You tried to upload a post that already exists.");
