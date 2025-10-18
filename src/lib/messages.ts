@@ -5,9 +5,9 @@ import { PostMetadata } from "../types/schema.ts";
 import { TGUserInfo } from "../types/bot.ts";
 
 type KnownError = Error & {
-  code?: string;
-  status?: number;
-};  
+    code?: string;
+    status?: number;
+};
 
 type StatusMessage = {
     status: JobStatus;
@@ -67,38 +67,54 @@ export function createBootanimationPost({ title, creator, details }: Omit<PostMe
 }
 
 export function createErrorMessage(
-  err: KnownError,
-  contextAction = "processing your request",
+    err: KnownError,
+    contextAction = "processing your request",
 ): FormattedString {
-  // Extract safe error details
-  const errType = err.name ?? "UnknownError";
-  const errMsg = err.message ?? "No details provided.";
-  const errCode = err.code ?? "N/A";
+    // Extract safe error details
+    const errType = err.name ?? "UnknownError";
+    const errMsg = err.message ?? "No details provided.";
+    const errCode = err.code ?? "N/A";
 
-  // If you want to hide raw error messages from users, you can toggle this
-  const showDetails = true; // change to false for production
+    // If you want to hide raw error messages from users, you can toggle this
+    const showDetails = true; // change to false for production
 
-  const message = FormattedString.b("⚠️ Oops! Something went wrong.").plain("\n\n")
-    .plain(`There was an error while ${contextAction}.\n`)
-    .plain("Please contact @a1x5h04 if the issue persists.");
+    const message = FormattedString.b("⚠️ Oops! Something went wrong.").plain("\n\n")
+        .plain(`There was an error while ${contextAction}.\n`)
+        .plain("Please contact @a1x5h04 if the issue persists.");
 
-  if (showDetails) {
-    message.plain("\n\n")
-      .b("Error Details:\n")
-      .plain(`• Type: `).code(errType).plain("\n")
-      .plain(`• Message: `).code(errMsg).plain("\n")
-      .plain(`• Code: `).code(errCode);
-  }
+    if (showDetails) {
+        message.plain("\n\n")
+            .b("Error Details:\n")
+            .plain(`• Type: `).code(errType).plain("\n")
+            .plain(`• Message: `).code(errMsg).plain("\n")
+            .plain(`• Code: `).code(errCode);
+    }
 
-  return message;
+    return message;
 }
 
-export function createDuplicatePostErrorMessage({name, message_id, user}: { name: string; message_id: number; user: TGUserInfo;}) {
+export function createDuplicatePostErrorMessage({ name, message_id, user }: { name: string; message_id: number; user: TGUserInfo; }) {
     return FormattedString.b("🔁 Duplicate Post Detected!").plain("\n\n")
-    .b("Post Name: ").plain(name).plain("\n")
-    .b("Original Post: ")
-    .link("View Here", `https://t.me/magiboot/${message_id}`).plain("\n")
-    .b("Created By: ")
-    .link(user.first_name, `tg://user?id=${user.id}`).plain("\n\n")
-    .plain("You tried to upload a post that already exists.");
+        .b("Post Name: ").plain(name).plain("\n")
+        .b("Original Post: ")
+        .link("View Here", `https://t.me/magiboot/${message_id}`).plain("\n")
+        .b("Created By: ")
+        .link(user.first_name, `tg://user?id=${user.id}`).plain("\n\n")
+        .plain("You tried to upload a post that already exists.");
+}
+
+
+export function createValidationErrorMessage(errors: string[]) {
+    const errorCount = errors.length;
+    if (errorCount === 0) {
+        return FormattedString.b("Validation Failed! 😵‍💫").plain("\n\nAn unknown error occurred.");
+    }
+
+    let message = FormattedString.b("Validation Failed! 😵‍💫").plain("\n\n")
+        .plain("Please fix the following " + (errorCount > 1 ? "errors" : "error") + " and try again:");
+    errors.forEach(error => {
+        message = message.plain("\n• ").plain(error);
+    });
+
+    return message;
 }
