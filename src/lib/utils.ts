@@ -1,10 +1,10 @@
 import { Row } from "https://esm.sh/@libsql/client@0.15.15";
+import { ValidationRule } from "../types/utils.ts";
 
 export function mapToModel<T>(data: Row): T;
 export function mapToModel<T>(data: Row[]): T[];
 export function mapToModel<T>(data: Row | Row[]): T | T[] {
-    const autoParse = (value: any): any => {
-      
+    const autoParse = (value: unknown): unknown => {
         if (typeof value === 'string') {
             if (/^({.*}|\[.*\])$/s.test(value)) {
                 try {
@@ -34,4 +34,18 @@ export function mapToModel<T>(data: Row | Row[]): T | T[] {
         return data.map(row => autoParse(row) as T);
     }
     return autoParse(data) as T;
+}
+
+
+
+export function runValidations<T>(item: T, rules: ValidationRule<T>[]): string[] {
+  const errors: string[] = [];
+  for (const rule of rules) {
+    const error = rule(item);
+    if (error) {
+      errors.push(error);
+    }
+  }
+  
+  return errors;
 }

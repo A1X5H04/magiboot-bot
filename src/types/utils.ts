@@ -1,0 +1,1 @@
+export type ValidationRule<T> = (item: T) => string | null;
