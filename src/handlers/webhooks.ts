@@ -41,7 +41,7 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
     if (validatedData.status === "completed") {
         const postCaption = createBootanimationPost(validatedData.post_metadata)
 
-        bot.api.sendVideo(TG_CHANNEL_ID, validatedData.post_metadata.video.file_id, {
+        const res = await bot.api.sendVideo(TG_CHANNEL_ID, validatedData.post_metadata.video.file_id, {
             reply_markup: {
                 inline_keyboard: [[
                     { text: "⬇️ Download Module", url: validatedData.post_metadata.download_url }
@@ -55,7 +55,7 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
             user_id: validatedData.post_metadata.creator.user_id,
             download_url: validatedData.post_metadata.download_url,
             name: validatedData.post_metadata.title,
-            message_id: validatedData.tg_metadata.messageId,
+            message_id: res.message_id,
             unique_file_id: validatedData.post_metadata.video.file_unique_id
         })
 
