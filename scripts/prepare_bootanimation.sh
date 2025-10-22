@@ -2,37 +2,23 @@
 
 # ==============================================================================
 #
-#  Boot Animation Preparer (Functional Version)
+#  Boot Animation Preparer
 #
-#  This script prepares a video file's frames for a boot animation. It operates
-#  like a function: it takes a video file as input and returns the path to a
-#  new temporary directory containing the prepared animation assets.
-#
-#  Usage:
-#    ./prepare_boot_animation.sh /path/to/video.mp4
-#
-#  On success, it prints the path of the output directory (e.g., /tmp/tmp.XXXXXX)
-#  to standard output. This directory contains the 'part0' folder and 'desc.txt',
-#  ready to be zipped.
-#
-#  All informational and error messages are printed to standard error.
+#  This script prepares a video file's frames for a boot animation. It reads
+#  configuration data from the 'METADATA_JSON' environment variable.
 #
 # ==============================================================================
 
 # --- Configuration ---
-MAX_DURATION=25               # Max video duration in seconds
-MAX_WIDTH=3840                # Max video width (4K)
-MAX_FPS=60                    # Max video framerate
-MAX_SIZE_MB=20                # Max video size in MB
+MAX_DURATION=25
+MAX_WIDTH=3840
+MAX_FPS=60
+MAX_SIZE_MB=20
 
 # --- Strict Mode & Error Handling ---
-# -e: exit on error
-# -u: exit on unset variables
-# -o pipefail: exit if any command in a pipeline fails
 set -euo pipefail
 
 # --- Helper Functions ---
-# All logs go to stderr to keep stdout clean for the final output path.
 log_info() {
   echo "INFO: $1" >&2
 }
@@ -43,6 +29,7 @@ log_error() {
 }
 
 # --- Core Logic Functions ---
+
 check_dependencies() {
   log_info "Checking for dependencies..."
   command -v ffmpeg >/dev/null 2>&1 || log_error "ffmpeg is not installed. Please install it."
@@ -53,13 +40,6 @@ check_dependencies() {
   command -v xargs >/dev/null 2>&1 || log_error "xargs is not installed (part of coreutils). It is required for file moving."
 }
 
-##
-# Analyzes the input video, validates it against configured limits,
-# and returns its properties as a space-separated string.
-#
-# @param $1 Path to the input video file.
-# @return A string "FPS TARGET_WIDTH TARGET_HEIGHT DURATION FORMAT RESOLUTION" on success.
-##
 validate_and_get_properties() {
   local input_video="$1"
   log_info "Analyzing and validating '$input_video'..."
@@ -67,7 +47,6 @@ validate_and_get_properties() {
     log_error "Input video '$input_video' not found!"
   fi
 
-  # Read all properties in one efficient ffprobe call
   local width height fps_fraction duration size_bytes format
   {
     read -r width
@@ -81,7 +60,6 @@ validate_and_get_properties() {
     -show_entries format=size,format_name \
     -of default=nw=1:nk=1 "$input_video")
 
-  # --- Validation ---
   log_info "Validating against limits"
   local size_mb 
   size_mb=$(awk -v size="$size_bytes" 'BEGIN { printf "%.0f", size / 1024 / 1024 }')
@@ -103,7 +81,6 @@ validate_and_get_properties() {
     log_error "Validation failed: Video framerate ($fps_value FPS) exceeds the maximum of $MAX_FPS FPS."
   fi
 
-  # Prepare properties for return
   local fps target_width target_height resolution
   fps=$(printf "%.0f" "$fps_value")
   target_width='1080'
@@ -114,12 +91,7 @@ validate_and_get_properties() {
   echo "$fps $target_width $target_height $duration $format $resolution"
 }
 
-##
-# Extracts ALL frames from the video into a single temp directory.
-#
-# @param $1 Path to the input video file.
-# @param $2 Path to the temporary output directory for all frames.
-##
+
 extract_all_frames() {
   local input_video="$1"
   local all_frames_dir="$2"
@@ -127,7 +99,7 @@ extract_all_frames() {
   log_info "Extracting all frames into '$all_frames_dir'..."
   mkdir -p "$all_frames_dir"
 
-  # -vsync 0 ensures frames are numbered sequentially starting from 0
+  # -vsync 0 ensures frames are numbered sequentially
   ffmpeg -v error -hwaccel auto -i "$input_video" \
          -vf "scale=720:-1,setsar=1,format=yuvj420p" \
          -q:v 2 \
@@ -139,14 +111,8 @@ extract_all_frames() {
   log_info "Full frame extraction complete."
 }
 
-##
+
 # Creates a simple desc.txt file for a single, infinitely looping part.
-#
-# @param $1 Path to the output directory.
-# @param $2 Target width.
-# @param $3 Target height.
-# @param $4 Frames per second (FPS).
-##
 create_single_part_desc_txt() {
   local output_dir="$1"
   local target_width="$2"
@@ -163,17 +129,7 @@ create_single_part_desc_txt() {
 }
 
 
-##
-# Validates, MOVES frames, and builds a multi-part boot animation.
-#
-# @param $1 Path to the temp directory holding all frames
-# @param $2 Root output directory path
-# @param $3 bootanim_config JSON string
-# @param $4 Video FPS
-# @param $5 Video total frames
-# @param $6 Target width
-# @param $7 Target height
-##
+# Process Multi part Config 
 process_multi_part_config() {
   local all_frames_dir="$1"
   local output_dir="$2"
@@ -186,19 +142,16 @@ process_multi_part_config() {
   local desc_file="$output_dir/desc.txt"
   log_info "Creating multi-part desc.txt at '$desc_file'..."
   
-  # Write header: Width Height FPS
   echo "$target_width $target_height $video_fps" > "$desc_file"
 
-  local last_frame_end=0
+  local last_frame_end=0 
   local part_index=0
-  local last_unit=""
+  local last_unit="" 
 
-  # Loop through each object in the JSON array using jq
   while read -r part_config; do
     local part_name="part$part_index"
     local part_dir="$output_dir/$part_name"
     
-    # Parse config for this part
     local time_val unit type count pause
     time_val=$(echo "$part_config" | jq -r '.timeframe.value')
     unit=$(echo "$part_config" | jq -r '.timeframe.unit')
@@ -208,20 +161,20 @@ process_multi_part_config() {
 
     local current_part_frame_end=0
 
-    # --- 1. Calculate Frame Range ---
-    if [ "$unit" == "seconds" ]; then
-      current_part_frame_end=$(awk -v time="$time_val" -v fps="$video_fps" 'BEGIN { printf "%.0f", time * fps }')
-    elif [ "$unit" == "frames" ]; then
-      current_part_frame_end=$(printf "%.0f" "$time_val")
-    elif [ "$unit" == "end" ]; then
-      current_part_frame_end=$video_total_frames
-    else
-      log_error "Invalid 'unit' in config: $unit"
-    fi
 
-    # --- 2. Validation ---
+    if [ "$unit" == "seconds" ]; {
+      current_part_frame_end=$(awk -v time="$time_val" -v fps="$video_fps" 'BEGIN { printf "%.0f", time * fps }')
+    } elif [ "$unit" == "frames" ]; {
+      current_part_frame_end=$(printf "%.0f" "$time_val")
+    } elif [ "$unit" == "end" ]; {
+      current_part_frame_end=$video_total_frames
+    } else {
+      log_error "Invalid 'unit' in config: $unit"
+    }
+
+
     if [ "$current_part_frame_end" -lt "$last_frame_end" ]; then
-       log_error "Validation failed: Part $part_index end time/frame ($current_part_frame_end) is before the previous part's end time/frame ($last_frame_end)."
+       log_error "Validation failed: Part $part_index end frame ($current_part_frame_end) is before the previous part's end frame ($last_frame_end)."
     fi
     if [ "$unit" != "end" ] && [ "$current_part_frame_end" -gt "$video_total_frames" ]; then
       log_error "Validation failed: Part $part_index end ($current_part_frame_end frames) exceeds video duration ($video_total_frames frames)."
@@ -230,10 +183,9 @@ process_multi_part_config() {
         current_part_frame_end=$video_total_frames
     fi
 
-    local frame_start_move=$last_frame_end
-    local frame_end_move=$((current_part_frame_end - 1))
+    local frame_start_move=$((last_frame_end + 1))
+    local frame_end_move=$current_part_frame_end
 
-    # --- 4. Move Frames ---
     mkdir -p "$part_dir"
     if [ "$frame_start_move" -le "$frame_end_move" ]; then
         log_info "Moving frames $frame_start_move to $frame_end_move to '$part_name'..."
@@ -242,27 +194,24 @@ process_multi_part_config() {
         log_info "Skipping part '$part_name': No frames in range ($frame_start_move > $frame_end_move)."
     fi
 
-    # --- 5. Append to desc.txt ---
     echo "$type $count $pause $part_name" >> "$desc_file"
 
-    # --- 6. Update counters for next loop ---
     last_frame_end=$current_part_frame_end
     part_index=$((part_index + 1))
     last_unit=$unit
+
   done < <(echo "$config_json" | jq -c '.[]')
 
-  # --- NEW LOGIC: Handle partial config ---
-  # If the last processed part's unit was NOT 'end' AND
-  # it didn't already cover the entire video...
+  
+  # Handle partial config
   if [ "$last_unit" != "end" ] && [ "$last_frame_end" -lt "$video_total_frames" ]; then
     log_info "Partial config detected. Adding a final looping part for remaining frames."
     local part_name="part$part_index"
     local part_dir="$output_dir/$part_name"
     mkdir -p "$part_dir"
 
-    # Frames are from the end of the last part to the end of the video
-    local frame_start_move=$last_frame_end
-    local frame_end_move=$((video_total_frames - 1))
+    local frame_start_move=$((last_frame_end + 1))
+    local frame_end_move=$video_total_frames
 
     if [ "$frame_start_move" -le "$frame_end_move" ]; then
         log_info "Moving remaining frames $frame_start_move to $frame_end_move to '$part_name'..."
@@ -271,7 +220,6 @@ process_multi_part_config() {
         log_info "No remaining frames to add to final part ($frame_start_move > $frame_end_move)."
     fi
 
-    # Append the default looping part (p 0 0) to desc.txt
     echo "p 0 0 $part_name" >> "$desc_file"
   
   elif [ "$last_unit" != "end" ] && [ "$last_frame_end" -ge "$video_total_frames" ]; then
@@ -279,12 +227,13 @@ process_multi_part_config() {
   elif [ "$last_unit" == "end" ]; then
       log_info "Config already ends with 'end' unit. No final part needed."
   fi
-  # --- End of new logic ---
-  
+
   log_info "Multi-part desc.txt created successfully."
 }
 
-# --- Main Execution Function ---
+
+
+
 main() {
   if [[ -z "${1-}" ]]; then
     log_error "Usage: $0 <input_video_file>"
@@ -296,32 +245,30 @@ main() {
   local output_dir="bootanimation-output"
   mkdir -p "$output_dir"
 
-  # Validate video and capture its properties
   local properties_string
   properties_string=$(validate_and_get_properties "$input_video")
   local fps target_width target_height duration format resolution
-  read -r fps target_width target_height duration format resolution <<< "$properties_string"
+  read -r fps target_width target_height duration format resolution <<< "$string"
 
-  # Calculate total frames (e.g., 10s * 30fps = 300 frames, numbered 0-299)
+  # This calculation is the total *count* of frames, which now also
+  # matches the *index* of the last frame (e.g., 361 frames = 00361.jpg)
   local total_frames
   total_frames=$(awk -v dur="$duration" -v fps="$fps" 'BEGIN { printf "%.0f", dur * fps }')
   
-  # --- NEW: Extract ALL frames first ---
   local all_frames_dir="$output_dir/all-frames-temp"
   extract_all_frames "$input_video" "$all_frames_dir"
 
-  local module_type="single-part" # Default module type
+  local module_type="single-part"
   local boot_config_json
+  
   boot_config_json=$(echo "${METADATA_JSON:-'{}'}" | jq -c '.bootanim_config // null')
 
   if [ -z "$boot_config_json" ] || [ "$boot_config_json" == "null" ] || [ "$boot_config_json" == "[]" ]; then
     log_info "No 'bootanim_config' found. Using default single-part logic."
     
-    # --- MODIFIED: Move all frames to part0 ---
     local part0_dir="$output_dir/part0"
     mkdir -p "$part0_dir"
     log_info "Moving all frames to 'part0'..."
-    # Check if files exist before moving to avoid error on 0-frame video
     if [ -n "$(ls -A "$all_frames_dir"/*.jpg 2>/dev/null)" ]; then
         mv "$all_frames_dir"/*.jpg "$part0_dir/"
     else
@@ -344,14 +291,12 @@ main() {
       "$target_height"
   fi
 
-  # --- NEW: Cleanup ---
   rmdir "$all_frames_dir"
   log_info "Cleaned up temporary frame directory."
 
   log_info "✅ All done! The prepared assets are in '$output_dir'."
   log_info "This path is now being printed to standard output."
 
-  # The final "return value" of the script.
   cat <<EOF
 boot_output_dir=$output_dir
 boot_video_duration=$duration
