@@ -162,15 +162,15 @@ process_multi_part_config() {
     local current_part_frame_end=0
 
 
-    if [ "$unit" == "seconds" ]; {
+    if [ "$unit" == "seconds" ]; then
       current_part_frame_end=$(awk -v time="$time_val" -v fps="$video_fps" 'BEGIN { printf "%.0f", time * fps }')
-    } elif [ "$unit" == "frames" ]; {
+    elif [ "$unit" == "frames" ]; then
       current_part_frame_end=$(printf "%.0f" "$time_val")
-    } elif [ "$unit" == "end" ]; {
+    elif [ "$unit" == "end" ]; then
       current_part_frame_end=$video_total_frames
-    } else {
+    else
       log_error "Invalid 'unit' in config: $unit"
-    }
+    fi
 
 
     if [ "$current_part_frame_end" -lt "$last_frame_end" ]; then
@@ -248,7 +248,7 @@ main() {
   local properties_string
   properties_string=$(validate_and_get_properties "$input_video")
   local fps target_width target_height duration format resolution
-  read -r fps target_width target_height duration format resolution <<< "$string"
+  read -r fps target_width target_height duration format resolution <<< "$properties_string"
 
   # This calculation is the total *count* of frames, which now also
   # matches the *index* of the last frame (e.g., 361 frames = 00361.jpg)
