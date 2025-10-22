@@ -4,3 +4,7 @@
 # env variables
 .env*
 !.env.example
+
+
+# Misc 
+TODO.md
