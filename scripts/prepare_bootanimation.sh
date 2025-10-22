@@ -191,9 +191,10 @@ process_multi_part_config() {
 
   local last_frame_end=0
   local part_index=0
+  local last_unit=""
 
   # Loop through each object in the JSON array using jq
-  echo "$config_json" | jq -c '.[]' | while read -r part_config; do
+  while read -r part_config; do
     local part_name="part$part_index"
     local part_dir="$output_dir/$part_name"
     
@@ -229,7 +230,6 @@ process_multi_part_config() {
         current_part_frame_end=$video_total_frames
     fi
 
-    # --- 3. Calculate FFMPEG frame range (inclusive, 0-indexed) ---
     local frame_start_move=$last_frame_end
     local frame_end_move=$((current_part_frame_end - 1))
 
@@ -237,9 +237,6 @@ process_multi_part_config() {
     mkdir -p "$part_dir"
     if [ "$frame_start_move" -le "$frame_end_move" ]; then
         log_info "Moving frames $frame_start_move to $frame_end_move to '$part_name'..."
-        # Use seq to generate filenames and pipe to xargs for efficient mv
-        # -f generates formatted strings, %05g is 5-digit padding
-        # xargs mv -t "$part_dir/" moves all files from stdin into the target dir
         seq -f "$all_frames_dir/%05g.jpg" "$frame_start_move" "$frame_end_move" | xargs mv -t "$part_dir/"
     else
         log_info "Skipping part '$part_name': No frames in range ($frame_start_move > $frame_end_move)."
@@ -251,7 +248,38 @@ process_multi_part_config() {
     # --- 6. Update counters for next loop ---
     last_frame_end=$current_part_frame_end
     part_index=$((part_index + 1))
-  done
+    last_unit=$unit
+  done < <(echo "$config_json" | jq -c '.[]')
+
+  # --- NEW LOGIC: Handle partial config ---
+  # If the last processed part's unit was NOT 'end' AND
+  # it didn't already cover the entire video...
+  if [ "$last_unit" != "end" ] && [ "$last_frame_end" -lt "$video_total_frames" ]; then
+    log_info "Partial config detected. Adding a final looping part for remaining frames."
+    local part_name="part$part_index"
+    local part_dir="$output_dir/$part_name"
+    mkdir -p "$part_dir"
+
+    # Frames are from the end of the last part to the end of the video
+    local frame_start_move=$last_frame_end
+    local frame_end_move=$((video_total_frames - 1))
+
+    if [ "$frame_start_move" -le "$frame_end_move" ]; then
+        log_info "Moving remaining frames $frame_start_move to $frame_end_move to '$part_name'..."
+        seq -f "$all_frames_dir/%05g.jpg" "$frame_start_move" "$frame_end_move" | xargs mv -t "$part_dir/"
+    else
+        log_info "No remaining frames to add to final part ($frame_start_move > $frame_end_move)."
+    fi
+
+    # Append the default looping part (p 0 0) to desc.txt
+    echo "p 0 0 $part_name" >> "$desc_file"
+  
+  elif [ "$last_unit" != "end" ] && [ "$last_frame_end" -ge "$video_total_frames" ]; then
+      log_info "Config parts cover the full video duration. No final part needed."
+  elif [ "$last_unit" == "end" ]; then
+      log_info "Config already ends with 'end' unit. No final part needed."
+  fi
+  # --- End of new logic ---
   
   log_info "Multi-part desc.txt created successfully."
 }
