@@ -146,7 +146,7 @@ jobs:
         run: |
           chmod +x scripts/prepare_bootanimation.sh
           export METADATA_JSON_ENV='${{ needs.setup.outputs.metadata }}'
-          CONTAINER_COMMAND="apt-get update -y && apt-get install -y jq && ./scripts/prepare_bootanimation.sh video.mp4"
+          CONTAINER_COMMAND="apt-get update -y >&2 && apt-get install -y jq >&2 && ./scripts/prepare_bootanimation.sh video.mp4"
           OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir \
           -e METADATA_JSON="$METADATA_JSON_ENV" \
           --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
