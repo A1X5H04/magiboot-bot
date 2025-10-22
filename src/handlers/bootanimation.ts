@@ -1,29 +1,44 @@
 import { Document, Video } from "https://esm.sh/@grammyjs/types@3.22.2/message.d.ts";
+import { FormattedString } from "https://esm.sh/@grammyjs/parse-mode@2.2.0";
 
 import { addJob } from "../services/queue.ts";
 import { handleJob } from "../services/ci/orchestrator.ts";
 import { getPostByNameOrUniqueId } from "../services/post.ts";
 import { TG_GROUP_ID } from "../lib/constants.ts";
 import { getUserInfo } from "../lib/helpers.ts";
-import { runValidations } from "../lib/utils.ts";
+import { parseBootAnimConfig, runValidations, splitTitleAndConfig } from "../lib/utils.ts";
 import { createDuplicatePostErrorMessage, createStatusMessage, createValidationErrorMessage } from "../lib/messages.ts";
-import { checkDocumentMimeType, checkDuration, checkFileSize, checkIsPortrait, checkVideoMimeType } from "../lib/validators.ts";
+import { checkBootAnimParts, checkDocumentMimeType, checkDuration, checkFileSize, checkIsPortrait, checkVideoMimeType } from "../lib/validators.ts";
 import { AppContext } from "../types/bot.ts";
 import { ValidationRule } from "../types/utils.ts";
 
 
 export async function handleGroupCreateCommand(ctx: AppContext) {
   const repliedMessage = ctx.message?.reply_to_message
-  const title = ctx.match
+  const createArgs = ctx.match
+
+  const bootAnimArgs = splitTitleAndConfig(createArgs as string);
 
   if (!repliedMessage) {
-    ctx.reply("You did not replied to any video, try again.")
+    ctx.reply("You did not replied to any animation, try again.", { reply_parameters: { message_id: ctx.message?.message_id ?? 0 } })
     return;
   }
 
-  if (!title) {
-    ctx.reply("You did not provide a title, try again.")
-    return;
+  console.log("Boot Animation Arguments", bootAnimArgs);
+
+  if (!bootAnimArgs) {
+    const usageMessage = FormattedString.b("Invalid Arguments! ❌").plain("\n\n")
+      .plain("Please provide your animation's name followed by the optional configuration parts. ")
+      .plain("The name must be the first argument and enclosed in **double quotes** if it contains spaces.\n\n")
+      .b("Required Format:\n")
+      .code("/b \"<Animation Name>\" <config.part> <config.part> ...")
+      .b("\n\nExamples:\n")
+      .italic('- "Cool Animation" 3.loop end.play\n')
+      .italic('- SimpleAnim 5.once 10.c.2.30\n\n')
+      .b("Tip:").plain(" If your name is one word, quotes are optional.");
+
+    ctx.reply(usageMessage.text, { entities: usageMessage.entities, reply_parameters: { message_id: ctx.message?.message_id } });
+    return
   }
 
 
@@ -44,12 +59,13 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
 
     if (errors.length > 0) {
       const validationErrMessage = createValidationErrorMessage(errors);
-      return ctx.reply(validationErrMessage.text, 
-      { entities: validationErrMessage.entities, 
-          reply_parameters: { 
-            message_id: ctx.message.message_id 
-          } 
-      })
+      return ctx.reply(validationErrMessage.text,
+        {
+          entities: validationErrMessage.entities,
+          reply_parameters: {
+            message_id: ctx.message.message_id
+          }
+        })
     }
 
     file.id = repliedMessage.video.file_id
@@ -64,12 +80,13 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     if (errors.length > 0) {
       console.log("Errors", errors);
       const validationErrMessage = createValidationErrorMessage(errors);
-      return ctx.reply(validationErrMessage.text, 
-      { entities: validationErrMessage.entities, 
-        reply_parameters: { 
-          message_id: ctx.message.message_id 
-        } 
-      })
+      return ctx.reply(validationErrMessage.text,
+        {
+          entities: validationErrMessage.entities,
+          reply_parameters: {
+            message_id: ctx.message.message_id
+          }
+        })
     }
 
     file.id = repliedMessage.document.file_id
@@ -78,7 +95,20 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     return ctx.reply("Invalid video format, try again.", { reply_parameters: { message_id: ctx.message.message_id } })
   }
 
-  const duplicatePost = await getPostByNameOrUniqueId(title as string, file.unique_id)
+  const configErrors = runValidations(bootAnimArgs.config, [checkBootAnimParts])
+
+  if (configErrors.length > 0) {
+    const validationErrMessage = createValidationErrorMessage(configErrors);
+    return ctx.reply(validationErrMessage.text,
+      {
+        entities: validationErrMessage.entities,
+        reply_parameters: {
+          message_id: ctx.message.message_id
+        }
+      })
+  }
+
+  const duplicatePost = await getPostByNameOrUniqueId(bootAnimArgs.title, file.unique_id)
 
   if (duplicatePost) {
     const userInfo = await getUserInfo(ctx.api, TG_GROUP_ID, duplicatePost.user_id);
@@ -102,17 +132,36 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     }
   })
 
-  const job = await addJob({
-    chatId: ctx.chat.id,
+  console.log("JOB Metadata", {
+    message: {
+      chatId: ctx.chat.id,
+      messageId: message.message_id,
+    },
     creator: {
       id: ctx.from.id,
       name: ctx.from.first_name
     },
-    statusMessageId: message.message_id,
-    videoFileId: file.id,
-    uniqueFileId: file.unique_id,
-    title: title as string,
-    videoRefMessageId: repliedMessage.message_id
+    file_id: file.id,
+    unique_file_id: file.unique_id,
+    title: bootAnimArgs.title,
+    video_ref_message_id: repliedMessage.message_id,
+    bootanim_config: parseBootAnimConfig(bootAnimArgs.config)
+  })
+
+  const job = await addJob({
+    message: {
+      chatId: ctx.chat.id,
+      messageId: message.message_id,
+    },
+    creator: {
+      id: ctx.from.id,
+      name: ctx.from.first_name
+    },
+    file_id: file.id,
+    unique_file_id: file.unique_id,
+    title: bootAnimArgs.title,
+    video_ref_message_id: repliedMessage.message_id,
+    bootanim_config: parseBootAnimConfig(bootAnimArgs.config)
   })
 
   if (!job) {

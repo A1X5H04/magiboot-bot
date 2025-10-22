@@ -1,3 +1,5 @@
+import { BootAnimPart } from "./utils.ts";
+
 export type JobStatus = "pending" | "processing" | "completed" | "failed";
 
 export interface JobMetadata {
@@ -11,6 +13,7 @@ export interface JobMetadata {
   file_id: string;
   unique_file_id: string;
   title: string;
+  bootanim_config?: BootAnimPart[];
   video_ref_message_id: number;
   creator: { 
     name: string;

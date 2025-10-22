@@ -50,7 +50,6 @@ export async function handleJob(jobId?: string) {
     const jobMetadata = job.metadata as unknown as JobMetadata
 
     const dispatchResult = await availableProvider.triggerWorkflow({
-        
         video: jobMetadata.file_id,
         other_metadata: JSON.stringify({
             jobId: job.id,
@@ -62,11 +61,11 @@ export async function handleJob(jobId?: string) {
             title: jobMetadata.title,
             creator: jobMetadata.creator,
             ref_message_id: jobMetadata.video_ref_message_id,
+            bootanim_config: jobMetadata.bootanim_config
         })
     });
 
     if (!dispatchResult.success) {
-        console.log("Failed to dispatch job", job.id, dispatchResult.message);
         await sendStatusUpdate({
             status: "failed",
             message: "Your request failed to be processed, try again later.",
