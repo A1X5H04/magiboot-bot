@@ -93,16 +93,22 @@ export function createErrorMessage(
     return message;
 }
 
-export function createDuplicatePostErrorMessage({ name, message_id, user }: { name: string; message_id: number; user: TGUserInfo; }) {
-    return FormattedString.b("🔁 Duplicate Post Detected!").plain("\n\n")
-        .b("Post Name: ").plain(name).plain("\n")
-        .b("Original Post: ")
-        .link("View Here", `https://t.me/magibootcommunity/${message_id}`).plain("\n")
-        .b("Created By: ")
-        .link(user.first_name, `tg://user?id=${user.id}`).plain("\n\n")
-        .plain("You tried to upload a post that already exists.");
+export function createDuplicatePostErrorMessage({ name, message_id, user }: {
+    name: string;
+    message_id: number;
+    user: TGUserInfo;
+}) {
+    return FormattedString
+        .b("🔁 Duplicate Post Detected!")
+        .plain("\n\n")
+        .i("This post already exists in the community.")
+        .plain("\n\n")
+        .b("📄 Post: ").plain(name).plain("\n")
+        .b("🔗 Original: ").link("View on Channel", `https://t.me/magibootcommunity/${message_id}`).plain("\n")
+        .b("👤 Author: ").link(user.first_name, `tg://user?id=${user.id}`)
+        .plain("\n\n")
+        .i("Please modify your post before uploading again.");
 }
-
 
 export function createValidationErrorMessage(errors: string[]) {
     const errorCount = errors.length;
