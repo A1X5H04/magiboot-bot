@@ -47,7 +47,7 @@ jobs:
         id: parse_metadata
         run: |
           METADATA_JSON='${{ inputs.other_metadata }}'
-          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id }')
+          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id. "bootanim_config": .bootanim_config }')
           MSG_METADATA=$(echo "${METADATA_JSON}" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
           echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
           echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
@@ -145,9 +145,13 @@ jobs:
         id: create_boot
         run: |
           chmod +x scripts/prepare_bootanimation.sh
+          export METADATA_JSON_ENV='${{ needs.setup.outputs.metadata }}'
+          CONTAINER_COMMAND="apt-get update -y && apt-get install -y jq && ./scripts/prepare_bootanimation.sh video.mp4"
           OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir \
+          -e METADATA_JSON="$METADATA_JSON_ENV" \
           --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
-          -c "./scripts/prepare_bootanimation.sh video.mp4")
+          -c "$CONTAINER_COMMAND")
+          
           echo "$OUTPUT_STRING" >> "$GITHUB_OUTPUT"
           BOOT_DIR=$(echo "$OUTPUT_STRING" | grep 'boot_output_dir=' | cut -d'=' -f2)
           echo "boot_output_dir_path=${BOOT_DIR}" >> "$GITHUB_OUTPUT"
