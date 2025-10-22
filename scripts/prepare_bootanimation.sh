@@ -198,9 +198,9 @@ process_multi_part_config() {
     local part_dir="$output_dir/$part_name"
     
     # Parse config for this part
-    local time_val type count pause unit
-    time_val=$(echo "$part_config" | jq -r '.time')
-    unit=$(echo "$part_config" | jq -r '.unit')
+    local time_val unit type count pause
+    time_val=$(echo "$part_config" | jq -r '.timeframe.value')
+    unit=$(echo "$part_config" | jq -r '.timeframe.unit')
     type=$(echo "$part_config" | jq -r '.type')
     count=$(echo "$part_config" | jq -r '.count')
     pause=$(echo "$part_config" | jq -r '.pause')
@@ -208,7 +208,7 @@ process_multi_part_config() {
     local current_part_frame_end=0
 
     # --- 1. Calculate Frame Range ---
-    if [ "$unit" == "timestamp" ]; then
+    if [ "$unit" == "seconds" ]; then
       current_part_frame_end=$(awk -v time="$time_val" -v fps="$video_fps" 'BEGIN { printf "%.0f", time * fps }')
     elif [ "$unit" == "frames" ]; then
       current_part_frame_end=$(printf "%.0f" "$time_val")
