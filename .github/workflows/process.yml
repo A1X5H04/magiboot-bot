@@ -216,7 +216,7 @@ jobs:
           )
 
           # Prepare the full, final Payload"
-          FINAL_PAYLOAD=$(echo "$POST_DATA" | jq -n \
+          FINAL_PAYLOAD=$(echo "$POST_METADATA" | jq -n \
             --arg status "completed" \
             --arg message "✅ Success! Your bootanimation is ready." \
             --argjson tg_metadata "$INPUT_MSG_METADATA" \
