@@ -228,11 +228,11 @@ jobs:
               post_metadata: .
             }')
 
-          curl --request POST \
-               --header "Content-Type: application/json" \
-               --data "$FINAL_PAYLOAD" \
-               --silent --show-error --fail \
-               "$TELEGRAM_BOT_WEBHOOK_URL"
+          echo "$FINAL_PAYLOAD" | curl --request POST \
+                                       --header "Content-Type: application/json" \
+                                       --data @- \
+                                       --silent --show-error --fail \
+                                       "$TELEGRAM_BOT_WEBHOOK_URL"
           
           echo "✅ Final 'Completed' payload sent."
 
