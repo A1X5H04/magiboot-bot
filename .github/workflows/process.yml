@@ -189,10 +189,10 @@ jobs:
           INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
         run: |
           PREVIEW_BASE64=$(base64 -w 0 preview.mp4)
-          POST_METADATA=$(jq -n -c \
+          POST_METADATA=$(echo "$PREVIEW_BASE64" | jq -n -c \
             --argjson base_meta '${{ steps.parse_metadata.outputs.json_string }}' \
             --arg download_url '${{ steps.upload.outputs.download_link }}' \
-            --arg preview_b64 "$PREVIEW_BASE64" \
+            --arg preview_b64 input \
             --arg video_res '${{ steps.run_processing.outputs.boot_video_resolution }}' \
             --arg boot_res '${{ steps.run_processing.outputs.boot_bootanimation_resolution }}' \
             --arg boot_fps '${{ steps.run_processing.outputs.boot_video_fps }}' \
