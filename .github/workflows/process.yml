@@ -159,7 +159,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/workdir" -w /workdir \
           jrottenberg/ffmpeg:4.4-ubuntu -i video.mp4 \
-          -vf "fps=15,scale=320:-1" -an -c:v libx264 -crf 28 -preset ultrafast -pix_fmt yuv420p \
+          -vf "fps=15,scale=320:-2" -an -c:v libx264 -crf 28 -preset ultrafast -pix_fmt yuv420p \
           preview.mp4
 
       # === DEPLOY STEPS ===
