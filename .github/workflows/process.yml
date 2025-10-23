@@ -227,7 +227,7 @@ jobs:
               message: $message,
               tg_metadata: $tg_metadata,
               job_id: $job_id,
-              post_metadata: .
+              post_metadata: $data
             }')
 
           curl --request POST \
