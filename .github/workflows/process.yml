@@ -189,10 +189,10 @@ jobs:
           INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
         run: |
           PREVIEW_BASE64=$(base64 -w 0 preview.mp4)
-          POST_METADATA=$(echo "$PREVIEW_BASE64" | jq -n -c \
+          POST_METADATA=$(echo "$PREVIEW_BASE64" | jq -R -c \
             --argjson base_meta '${{ steps.parse_metadata.outputs.json_string }}' \
             --arg download_url '${{ steps.upload.outputs.download_link }}' \
-            --arg preview_b64 input \
+            --arg preview_b64 . \
             --arg video_res '${{ steps.run_processing.outputs.boot_video_resolution }}' \
             --arg boot_res '${{ steps.run_processing.outputs.boot_bootanimation_resolution }}' \
             --arg boot_fps '${{ steps.run_processing.outputs.boot_video_fps }}' \
@@ -216,18 +216,18 @@ jobs:
           )
 
           # Prepare the full, final Payload"
-          FINAL_PAYLOAD=$(echo "$POST_METADATA" | jq -n \
+          FINAL_PAYLOAD=$(echo "$POST_METADATA" | jq -c \
             --arg status "completed" \
             --arg message "✅ Success! Your bootanimation is ready." \
             --argjson tg_metadata "$INPUT_MSG_METADATA" \
             --arg job_id "$INPUT_JOB_ID" \
-            --argjson data input \
+            --argjson data . \
             '{
               status: $status,
               message: $message,
               tg_metadata: $tg_metadata,
               job_id: $job_id,
-              post_metadata: $data
+              post_metadata: .
             }')
 
           curl --request POST \
