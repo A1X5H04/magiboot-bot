@@ -16,6 +16,9 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
 
     const input = await request.json();
 
+
+    console.log("WebHook Status Request: ", input);
+
     const parseResult = safeParse(statusUpdateSchema, input);
 
     if (!parseResult.success) {
