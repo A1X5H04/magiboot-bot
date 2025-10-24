@@ -1,4 +1,4 @@
-import type { Context, NextFunction } from "grammy";
+import type { Context, NextFunction } from "https://esm.sh/grammy";
 import { createErrorMessage } from "../lib/messages.ts";
 
 
