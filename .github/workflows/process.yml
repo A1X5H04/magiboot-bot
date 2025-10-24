@@ -194,7 +194,7 @@ jobs:
           echo "download_link=${DOWNLOAD_LINK}" >> "$GITHUB_OUTPUT"
       
       - name: "Prepare final post metadata"
-        id: send_completed
+        id: post_data
         env:
           TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
           INPUT_JOB_ID: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
@@ -203,7 +203,7 @@ jobs:
           POST_METADATA=$(jq -n -c \
             --argjson base_meta '${{ steps.parse_metadata.outputs.json_string }}' \
             --arg download_url '${{ steps.upload.outputs.download_link }}' \
-            --arg preview_url '${{ steps.upload_preview.outputs.preview_url }}'
+            --arg preview_url '${{ steps.upload_preview.outputs.preview_url }}' \
             --arg video_res '${{ steps.run_processing.outputs.boot_video_resolution }}' \
             --arg boot_res '${{ steps.run_processing.outputs.boot_bootanimation_resolution }}' \
             --arg boot_fps '${{ steps.run_processing.outputs.boot_video_fps }}' \
