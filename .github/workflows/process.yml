@@ -309,7 +309,7 @@ jobs:
           error_log_b64: ${{ needs.build_and_deploy.outputs.error_log_b64 }}
 
       - name: Send Failure with Telegram API (Fallback)
-        if: steps.try_webhook.outcome === 'failure'
+        if: steps.try_webhook.outcome == 'failure'
         env:
           BOT_TOKEN: ${{ env.BOT_TOKEN }}
           MSG_METADATA: ${{ needs.build_and_deploy.outputs.msg_metadata }}
