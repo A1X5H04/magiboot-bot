@@ -20,7 +20,7 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
   const bootAnimArgs = splitTitleAndConfig(createArgs as string);
 
   if (!repliedMessage) {
-    ctx.reply("You did not replied to any animation, try again.")
+    await ctx.reply("You did not replied to any animation, try again.")
     return;
   }
 
@@ -28,7 +28,7 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
   const currentUserId = ctx.from?.id
 
   if (repliedUserId !== currentUserId) {
-    ctx.reply("Did you replied to another user's animation?, that's bad you know..")
+    await ctx.reply("Did you replied to another user's animation?, that's bad you know..")
     return;
   }
 
@@ -46,7 +46,7 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
       .italic('- SimpleAnim 5.once 10.c.2.30\n\n')
       .b("Tip:").plain(" If your name is one word, quotes are optional.");
 
-    ctx.reply(usageMessage.text, { entities: usageMessage.entities });
+    await ctx.reply(usageMessage.text, { entities: usageMessage.entities });
     return
   }
 
@@ -68,37 +68,34 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
 
     if (errors.length > 0) {
       const validationErrMessage = createValidationErrorMessage(errors);
-      return ctx.reply(validationErrMessage.text,
+      return await ctx.reply(validationErrMessage.text,
         { entities: validationErrMessage.entities })
     }
 
     file.id = repliedMessage.video.file_id
     file.unique_id = repliedMessage.video.file_unique_id
-
-
   } else if (repliedMessage.document) {
-
     const rules: ValidationRule<Document>[] = [checkFileSize, checkDocumentMimeType];
     const errors = runValidations(repliedMessage.document, rules);
 
     if (errors.length > 0) {
       console.log("Errors", errors);
       const validationErrMessage = createValidationErrorMessage(errors);
-      return ctx.reply(validationErrMessage.text,
+      return await ctx.reply(validationErrMessage.text,
         { entities: validationErrMessage.entities })
     }
 
     file.id = repliedMessage.document.file_id
     file.unique_id = repliedMessage.document.file_unique_id
   } else {
-    return ctx.reply("Invalid video format, try again.")
+    return await ctx.reply("Invalid video format, try again.")
   }
 
   const configErrors = runValidations(bootAnimArgs.config, [checkBootAnimParts])
 
   if (configErrors.length > 0) {
     const validationErrMessage = createValidationErrorMessage(configErrors);
-    return ctx.reply(validationErrMessage.text,
+    return await ctx.reply(validationErrMessage.text,
       { entities: validationErrMessage.entities })
   }
 
@@ -109,7 +106,7 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
 
     const duplicatePostMessage = createDuplicatePostErrorMessage({ name: duplicatePost.name, message_id: duplicatePost.message_id, user: userInfo });
 
-    ctx.reply(duplicatePostMessage.text, { entities: duplicatePostMessage.entities });
+    await ctx.reply(duplicatePostMessage.text, { entities: duplicatePostMessage.entities });
     return
   }
 
