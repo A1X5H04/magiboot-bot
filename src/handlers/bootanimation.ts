@@ -28,10 +28,9 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
   const currentUserId = ctx.from?.id
 
   if (repliedUserId !== currentUserId) {
-    await ctx.reply("Did you replied to another user's animation?, that's bad you know..")
+    await ctx.reply("Kanging another user's animation is bad idea!")
     return;
   }
-
 
   console.log("Boot Animation Arguments", bootAnimArgs);
 
