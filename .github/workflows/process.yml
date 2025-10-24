@@ -154,13 +154,25 @@ jobs:
           FINAL_FILENAME=$(scripts/package_module.sh "${{ steps.run_processing.outputs.boot_output_dir_path }}" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
           echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
 
-      - name: "Generate MP4 Preview"
-        id: create_preview
+      - name: "Generate and Upload MP4 Preview"
+        id: upload_preview
         run: |
           docker run --rm -v "$(pwd):/workdir" -w /workdir \
           jrottenberg/ffmpeg:4.4-ubuntu -i video.mp4 \
           -vf "fps=15,scale=320:-2" -an -c:v libx264 -crf 28 -preset ultrafast -pix_fmt yuv420p \
           preview.mp4
+
+          API_RESPONSE=$(curl -F "file=@preview.mp4" https://tmpfiles.org/api/v1/upload)
+
+          PREVIEW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url')
+
+          if [ -z "$PREVIEW_URL" ] || [ "$PREVIEW_URL" == "null"]; then
+            echo "::error::Failed to upload preview to tmpfiles.org."
+            echo "$API_RESPONSE" >&2
+            exit 1
+          fi
+
+          echo "preview_url=${PREVIEW_URL}" >> "$GITHUB_OUTPUT"
 
       # === DEPLOY STEPS ===
       - name: "Send 'Uploading' status"
@@ -181,17 +193,17 @@ jobs:
           DOWNLOAD_LINK=$(scripts/upload_file.sh "${{ steps.package_module.outputs.filename }}")
           echo "download_link=${DOWNLOAD_LINK}" >> "$GITHUB_OUTPUT"
       
-      - name: "Prepare and Send 'Completed' Payload"
+      - name: "Prepare final post metadata"
         id: send_completed
         env:
           TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
           INPUT_JOB_ID: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
           INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
         run: |
-          PREVIEW_BASE64=$(base64 -w 0 preview.mp4)
-          POST_METADATA=$(echo "$PREVIEW_BASE64" | jq -R -c \
+          POST_METADATA=$(jq -n -c \
             --argjson base_meta '${{ steps.parse_metadata.outputs.json_string }}' \
             --arg download_url '${{ steps.upload.outputs.download_link }}' \
+            --arg preview_url '${{ steps.upload_preview.outputs.preview_url }}'
             --arg video_res '${{ steps.run_processing.outputs.boot_video_resolution }}' \
             --arg boot_res '${{ steps.run_processing.outputs.boot_bootanimation_resolution }}' \
             --arg boot_fps '${{ steps.run_processing.outputs.boot_video_fps }}' \
@@ -202,7 +214,7 @@ jobs:
                 "title": $base_meta.title,
                 "creator": { "user_id": $base_meta.creator.id, "name": $base_meta.creator.name },
                 "download_url": $download_url,
-                "preview_base64": .,
+                "preview_url": $preview_url,
                 "video": { "file_id": "${{ inputs.video }}", "file_unique_id": $base_meta.unique_file_id, "ref_message_id": $base_meta.ref_message_id },
                 "details": {
                   "resolution": { "module": $boot_res, "video": $video_res },
@@ -214,28 +226,18 @@ jobs:
             '
           )
 
-          # Prepare the full, final Payload"
-          FINAL_PAYLOAD=$(echo "$POST_METADATA" | jq -c \
-            --arg status "completed" \
-            --arg message "✅ Success! Your bootanimation is ready." \
-            --argjson tg_metadata "$INPUT_MSG_METADATA" \
-            --arg job_id "$INPUT_JOB_ID" \
-            '{
-              status: $status,
-              message: $message,
-              tg_metadata: $tg_metadata,
-              job_id: $job_id,
-              post_metadata: .
-            }')
+          echo "post_metadata=$POST_METADATA" >> "$GITHUB_OUTPUT"
 
-          echo "$FINAL_PAYLOAD" | curl --request POST \
-                                       --header "Content-Type: application/json" \
-                                       --data @- \
-                                       --silent --show-error --fail \
-                                       "$TELEGRAM_BOT_WEBHOOK_URL"
-          
-          echo "✅ Final 'Completed' payload sent."
-
+      - name: "Send 'Completed' status"
+        uses: ./.github/actions/send-status
+        env:
+          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
+        with:
+          status: "completed"
+          message: "✅ Success! Your bootanimation is posted on channel."
+          job_id: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
+          msg_metadata: ${{ steps.parse_metadata.outputs.msg_metadata }}
+          data: ${{ steps.post_data.outputs.post_metadata }}
 
       # === FINAL STEP ===
       - name: "Publish Job Outputs"
