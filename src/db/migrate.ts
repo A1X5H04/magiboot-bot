@@ -1,8 +1,7 @@
 // migrate.ts
-import { join } from "@std/path/join";
-import { type Client } from "@libsql/client";
+import { join } from "https://deno.land/std/path/mod.ts";
 
-import tursoClient from "./client.ts";
+import { createTursoClient, TursoClient } from "../lib/turso.ts"
 
 // --- Configuration ---
 
@@ -16,7 +15,7 @@ async function ensureMigrationsDir() {
   await Deno.mkdir(MIGRATIONS_DIR, { recursive: true });
 }
 
-async function ensureMigrationsTable(client: Client) {
+async function ensureMigrationsTable(client: TursoClient) {
   await client.execute(`
     CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +25,7 @@ async function ensureMigrationsTable(client: Client) {
   `);
 }
 
-async function getAppliedMigrations(client: Client): Promise<Set<string>> {
+async function getAppliedMigrations(client: TursoClient): Promise<Set<string>> {
     
   const result = await client.execute(`SELECT name FROM ${MIGRATIONS_TABLE} ORDER BY name`);
   return new Set(result.rows.map((row) => row.name as string));
@@ -99,6 +98,7 @@ async function handleCreate(fileName?: string) {
  * `apply [file_name?]`: Applies pending migrations.
  */
 async function handleApply(targetFile?: string) {
+  const tursoClient = createTursoClient();
   
   await ensureMigrationsTable(tursoClient);
 
@@ -161,6 +161,8 @@ async function handleApply(targetFile?: string) {
  * `revert [file_name?]`: Reverts applied migrations.
  */
 async function handleRevert(targetFile?: string) {
+   const tursoClient = createTursoClient();
+
   await ensureMigrationsTable(tursoClient);
 
   const result = await tursoClient.execute(`SELECT name FROM ${MIGRATIONS_TABLE} ORDER BY name DESC`);
