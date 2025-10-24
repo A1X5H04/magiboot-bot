@@ -36,6 +36,7 @@
         message: v.string(),
         job_id: v.string(),
         tg_metadata: tgMetadataSchema,
+        error_log_b64: v.optional(v.string()),
     });
 
     const processingSchema = v.object({

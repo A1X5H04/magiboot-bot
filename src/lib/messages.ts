@@ -1,4 +1,6 @@
 import { FormattedString } from "https://esm.sh/@grammyjs/parse-mode@2.2.0";
+import { decodeBase64 } from "https://deno.land/std/encoding/base64.ts";
+
 import { JobStatus } from "../types/queue.ts";
 import { createProgressBar } from "./generators.ts";
 import { PostMetadata } from "../types/schema.ts";
@@ -13,6 +15,7 @@ type StatusMessage = {
     status: JobStatus;
     message: string;
     progress: number | undefined;
+    error_log_b64?: string;
 }
 
 const statusMap = {
@@ -34,15 +37,26 @@ const statusMap = {
     }
 }
 
-export function createStatusMessage({ status, message, progress }: StatusMessage) {
-    const statusMessageWithoutProgress = FormattedString.b(`${statusMap[status].icon} Status: `).plain(statusMap[status].title).plain("\n")
+export function createStatusMessage({ status, message, progress, error_log_b64 }: StatusMessage) {
+    const statusMessage = FormattedString.b(`${statusMap[status].icon} Status: `).plain(statusMap[status].title).plain("\n")
         .b("Message: ").plain(message)
 
-    if (status === "completed" || status === "failed" || status === "pending") {
-        return statusMessageWithoutProgress;
+
+    if (status === "failed" && error_log_b64) {
+        try {
+            const logBytes = decodeBase64(error_log_b64)
+            const decodedLogs = new TextDecoder().decode(logBytes);
+            statusMessage.plain("\n\n").b("Error Details: ").plain("\n").plain(decodedLogs);
+        } catch (e) {
+            statusMessage.plain("\n\n").b("Error Details:").plain("\n").plain("Failed to decode error log.");
+        }
     }
 
-    return new FormattedString("").concat(statusMessageWithoutProgress).plain("\n\n").plain(`Progress: ${createProgressBar(progress ?? 0)}`)
+    if (status === "completed" || status === "failed" || status === "pending") {
+        return statusMessage;
+    }
+
+    return new FormattedString("").concat(statusMessage).plain("\n\n").plain(`Progress: ${createProgressBar(progress ?? 0)}`)
 
 }
 
