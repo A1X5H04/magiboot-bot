@@ -1,6 +1,7 @@
-import { Composer } from "https://esm.sh/grammy";
+import { Composer, Middleware } from "https://esm.sh/grammy";
 import { AppContext } from "../types/bot.ts";
 import { handleGroupCreateCommand } from "../handlers/bootanimation.ts";
+import { autoQuote } from "https://deno.land/x/grammy_autoquote@v2.0.9/mod.ts";
 
 
 const commandsComposer = new Composer<AppContext>()
@@ -9,7 +10,9 @@ const commandsComposer = new Composer<AppContext>()
 commandsComposer.command("start", (ctx) => ctx.reply("You called start command."))
 commandsComposer.command("help", (ctx) => ctx.reply("You called help command."))
 
-// Public Commands
-commandsComposer.command("bootanimation", handleGroupCreateCommand);
+// Group Commands
+const commandComposerWithAutoReply = commandsComposer.use(autoQuote() as unknown as Middleware)
+commandComposerWithAutoReply.command(["b", "bootanimation"], handleGroupCreateCommand);
+
 
 export default commandsComposer
