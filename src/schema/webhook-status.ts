@@ -13,7 +13,7 @@
             name: v.string(),
         }),
         download_url: v.pipe(v.string(), v.url()),
-        preview_base64: v.string(),
+        preview_url: v.pipe(v.string(), v.url()),
         video: v.object({
             file_id: v.string(),
             file_unique_id: v.string(),

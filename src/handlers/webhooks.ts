@@ -1,5 +1,4 @@
-import {  decodeBase64 } from "https://deno.land/std/encoding/base64.ts";
-import { Api, Bot, InputFile, RawApi } from "https://esm.sh/grammy";
+import { Api, Bot, RawApi } from "https://esm.sh/grammy";
 import { safeParse } from "https://esm.sh/valibot";
 
 import { AppContext } from "../types/bot.ts";
@@ -44,11 +43,7 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
     if (validatedData.status === "completed") {
         const postCaption = createBootanimationPost(validatedData.post_metadata)
 
-        const fileBytes = decodeBase64(validatedData.post_metadata.preview_base64);
-
-        const previewFile = new InputFile(fileBytes, "preview.mp4");
-
-        const res = await bot.api.sendAnimation(TG_CHANNEL_ID, previewFile || validatedData.post_metadata.video.file_id, {
+        const res = await bot.api.sendAnimation(TG_CHANNEL_ID, validatedData.post_metadata.preview_url || validatedData.post_metadata.video.file_id, {
             reply_markup: {
                 inline_keyboard: [[
                     { text: "⬇️ Download Module", url: validatedData.post_metadata.download_url }
