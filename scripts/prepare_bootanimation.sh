@@ -18,33 +18,26 @@ MAX_SIZE_MB=20
 # --- Strict Mode & Error Handling ---
 set -euo pipefail
 
-# --- Helper Functions ---
-log_info() {
-  echo "INFO: $1" >&2
-}
-
-log_error() {
-  echo "::error::$1" >&2
-  exit 1
-}
+# --- Logger ---
+source scripts/logger.sh
 
 # --- Core Logic Functions ---
 
 check_dependencies() {
-  log_info "Checking for dependencies..."
-  command -v ffmpeg >/dev/null 2>&1 || log_error "ffmpeg is not installed. Please install it."
-  command -v ffprobe >/dev/null 2>&1 || log_error "ffprobe is not installed. Please install it."
-  command -v awk >/dev/null 2>&1 || log_error "awk is not installed. It is required for calculations."
-  command -v jq >/dev/null 2>&1 || log_error "jq is not installed. It is required for JSON parsing."
-  command -v seq >/dev/null 2>&1 || log_error "seq is not installed (part of coreutils). It is required for file moving."
-  command -v xargs >/dev/null 2>&1 || log_error "xargs is not installed (part of coreutils). It is required for file moving."
+  log_info "Checking dependencies: ffmpeg, ffprobe, awk, jq, seq, xargs..."
+  command -v ffmpeg >/dev/null 2>&1 || log_fatal "ffmpeg is not installed. Please install it."
+  command -v ffprobe >/dev/null 2>&1 || log_fatal "ffprobe is not installed. Please install it."
+  command -v awk >/dev/null 2>&1 || log_fatal "awk is not installed. It is required for calculations."
+  command -v jq >/dev/null 2>&1 || log_fatal "jq is not installed. It is required for JSON parsing."
+  command -v seq >/dev/null 2>&1 || log_fatal "seq is not installed (part of coreutils). It is required for file moving."
+  command -v xargs >/dev/null 2>&1 || log_fatal "xargs is not installed (part of coreutils). It is required for file moving."
 }
 
 validate_and_get_properties() {
   local input_video="$1"
   log_info "Analyzing and validating '$input_video'..."
   if [ ! -f "$input_video" ]; then
-    log_error "Input video '$input_video' not found!"
+    log_fatal "Input video '$input_video' not found!"
   fi
 
   local width height fps_fraction duration size_bytes format
@@ -64,21 +57,21 @@ validate_and_get_properties() {
   local size_mb 
   size_mb=$(awk -v size="$size_bytes" 'BEGIN { printf "%.0f", size / 1024 / 1024 }')
   if [ "$size_mb" -gt "$MAX_SIZE_MB" ]; then
-    log_error "Validation failed: Video size ($size_mb MB) exceeds the maximum of $MAX_SIZE_MB MB."
+    log_fatal "Validation failed: Video size ($size_mb MB) exceeds the maximum of $MAX_SIZE_MB MB."
   fi
 
   if (( $(awk -v dur="$duration" 'BEGIN { print (dur > '$MAX_DURATION') }') )); then
-    log_error "Validation failed: Video duration ($duration s) exceeds the maximum of $MAX_DURATION s."
+    log_fatal "Validation failed: Video duration ($duration s) exceeds the maximum of $MAX_DURATION s."
   fi
 
   if [ "$width" -gt "$MAX_WIDTH" ]; then
-    log_error "Validation failed: Video width ($width px) exceeds the maximum of $MAX_WIDTH px (4K)."
+    log_fatal "Validation failed: Video width ($width px) exceeds the maximum of $MAX_WIDTH px (4K)."
   fi
 
   local fps_value
   fps_value=$(awk -F/ '{print $1 / $2}' <<< "$fps_fraction")
   if (( $(awk -v fps="$fps_value" 'BEGIN { print (fps > '$MAX_FPS') }') )); then
-    log_error "Validation failed: Video framerate ($fps_value FPS) exceeds the maximum of $MAX_FPS FPS."
+    log_fatal "Validation failed: Video framerate ($fps_value FPS) exceeds the maximum of $MAX_FPS FPS."
   fi
 
   local fps target_width target_height resolution
@@ -169,15 +162,15 @@ process_multi_part_config() {
     elif [ "$unit" == "end" ]; then
       current_part_frame_end=$video_total_frames
     else
-      log_error "Invalid 'unit' in config: $unit"
+      log_fatal "Invalid 'unit' in config: $unit"
     fi
 
 
     if [ "$current_part_frame_end" -lt "$last_frame_end" ]; then
-       log_error "Validation failed: Part $part_index end frame ($current_part_frame_end) is before the previous part's end frame ($last_frame_end)."
+       log_fatal "Validation failed: Part $part_index end frame ($current_part_frame_end) is before the previous part's end frame ($last_frame_end)."
     fi
     if [ "$unit" != "end" ] && [ "$current_part_frame_end" -gt "$video_total_frames" ]; then
-      log_error "Validation failed: Part $part_index end ($current_part_frame_end frames) exceeds video duration ($video_total_frames frames)."
+      log_fatal "Validation failed: Part $part_index end ($current_part_frame_end frames) exceeds video duration ($video_total_frames frames)."
     fi
     if [ "$current_part_frame_end" -gt "$video_total_frames" ]; then
         current_part_frame_end=$video_total_frames
@@ -232,13 +225,13 @@ process_multi_part_config() {
 }
 
 
-
-
 main() {
   if [[ -z "${1-}" ]]; then
-    log_error "Usage: $0 <input_video_file>"
+    log_fatal "Usage: $0 <input_video_file>"
   fi
   local input_video="$1"
+
+  export WORKFLOW_LOG_FILE="/workdir/build_log.jsonl"
 
   check_dependencies
 
@@ -292,7 +285,6 @@ main() {
   fi
 
   rmdir "$all_frames_dir"
-  log_info "Cleaned up temporary frame directory."
 
   log_info "✅ All done! The prepared assets are in '$output_dir'."
   log_info "This path is now being printed to standard output."

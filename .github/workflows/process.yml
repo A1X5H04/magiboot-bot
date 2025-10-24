@@ -35,6 +35,8 @@ jobs:
       msg_metadata: ${{ steps.publish_outputs.outputs.msg_metadata }}
       job_id: ${{ steps.publish_outputs.outputs.job_id }}
       error_log_b64: ${{ steps.publish_outputs.outputs.error_log_b64 }}
+    env:
+      WORKFLOW_LOG_FILE: ${{ github.workspace }}/build_log.jsonl
 
     steps:
       # === SETUP STEPS ===
@@ -42,16 +44,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: "Install dependencies (jq, curl)"
-        run: sudo apt-get update && sudo apt-get install -y jq curl
+        run: |
+          source scripts/logger.sh
+          log_info "Installing dependencies (jq, curl)..."
+          sudo apt-get update -y > >/dev/null 2>&1
+          sudo apt-get install -y jq curl >/dev/null 2>&1
+          log_info "Dependencies installed"
 
       - name: "Parse and validate metadata"
         id: parse_metadata
         run: |
+          source scripts/logger.sh
+          log_info "Parsing workflow metadata..."
           METADATA_JSON='${{ inputs.other_metadata }}'
           PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id, "bootanim_config": .bootanim_config }')
           MSG_METADATA=$(echo "${METADATA_JSON}" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
           echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
           echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
+          log_info "Metadata parsed."
 
       - name: "Send 'Setup Started' status"
         uses: ./.github/actions/send-status
@@ -66,16 +76,18 @@ jobs:
       - name: "Download video file"
         id: download
         run: |
+          source scripts/logger.sh
           set -e
           FILE_ID="${{ inputs.video }}"
           BOT_TOKEN="${{ env.BOT_TOKEN }}"
+          log_info "Downloading video file (FileID: $FILE_ID)..."
           API_RESPONSE=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${FILE_ID}")
           if [[ "$(echo "$API_RESPONSE" | jq -r '.ok')" != "true" ]]; then
-            echo "❌ Telegram API Error: $(echo "$API_RESPONSE" | jq -r '.description')" >&2; exit 1
+            log_fatal "Telegram API Error: $(echo "$API_RESPONSE" | jq -r '.description')"
           fi
           FILE_PATH=$(echo "$API_RESPONSE" | jq -r '.result.file_path')
           curl -s -L -o "video.mp4" "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}"
-          echo "✅ Video downloaded successfully."
+          log_info "Video downloaded successfully to video.mp4"
 
       # === PROCESS & PACKAGE STEPS ===
       - name: "Cache FFmpeg Docker image"
@@ -87,14 +99,18 @@ jobs:
 
       - name: "Load or Pull FFmpeg image"
         run: |
+          source scripts/logger.sh
           mkdir -p docker-image-cache
           if [ -f docker-image-cache/ffmpeg.tar ]; then
-            echo "Loading FFmpeg from cache..."
+            log_info "Loading FFmpeg from cache..."
             docker load -i docker-image-cache/ffmpeg.tar
+            log_info "FFmpeg loaded."
           else
             echo "Pulling FFmpeg from registry..."
+            log_info "Pulling FFmpeg from registry..."
             docker pull jrottenberg/ffmpeg:4.4-ubuntu
             docker save jrottenberg/ffmpeg:4.4-ubuntu -o docker-image-cache/ffmpeg.tar
+            log_info "FFmpeg saved to cache."
           fi
 
       - name: "Send 'Processing Started' status"
@@ -110,30 +126,32 @@ jobs:
       - name: "Run Processing Script (Capture stdout/stderr)"
         id: run_processing
         run: |
+          source scripts/logger.sh
           chmod +x scripts/prepare_bootanimation.sh
           export METADATA_JSON_ENV='${{ steps.parse_metadata.outputs.json_string }}'
-          CONTAINER_COMMAND="apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && ./scripts/prepare_bootanimation.sh video.mp4"
+          log_info "Starting containerized video processing..."
+          CONTAINER_COMMAND="apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
           
           # Execute, capturing stdout to variable and stderr to file
           OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir \
           -e METADATA_JSON="$METADATA_JSON_ENV" \
           --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
-          -c "$CONTAINER_COMMAND" 2> stderr.log)
+          -c "$CONTAINER_COMMAND")
           
-          echo "✅ Script finished successfully."
-          cat stderr.log >&2 # Print success log to GHA
+          log_info "Video processing script finished."
           
           echo "$OUTPUT_STRING" >> "$GITHUB_OUTPUT"
           BOOT_DIR=$(echo "$OUTPUT_STRING" | grep 'boot_output_dir=' | cut -d'=' -f2)
           echo "boot_output_dir_path=${BOOT_DIR}" >> "$GITHUB_OUTPUT"
 
       - name: "Capture Error Log on Failure"
-        if: failure() && steps.run_processing.outcome == 'failure'
+        if: always() && (failure() || steps.run_processing.outcome == 'failure')
         id: capture_error_log
         run: |
-          echo "::error::Processing script failed. Capturing logs."
-          cat stderr.log >&2
-          echo "error_log_content=$(cat stderr.log | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          source scripts/logger.sh
+          log_info "Capturing user-facing logs for failure report..."
+          USER_LOGS=$(get_user_logs)
+          echo "error_log_b64=$(echo "$USER_LOGS" | base64 -w 0)" >> "$GITHUB_OUTPUT"
 
       - name: "Send 'Packaging Started' status"
         uses: ./.github/actions/send-status
@@ -148,30 +166,38 @@ jobs:
       - name: "Package the flashable module"
         id: package_module
         run: |
+          source scripts/logger.sh
           chmod +x scripts/package_module.sh
+          log_info "Packaging final module..."
           MODULE_NAME=$(echo '${{ steps.parse_metadata.outputs.json_string }}' | jq -r '.title')
           MODULE_CREATOR=$(echo '${{ steps.parse_metadata.outputs.json_string }}' | jq -r '.creator.name')
           FINAL_FILENAME=$(scripts/package_module.sh "${{ steps.run_processing.outputs.boot_output_dir_path }}" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
           echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
+          log_info "Module packaged: $FINAL_FILENAME"
 
       - name: "Generate and Upload MP4 Preview"
         id: upload_preview
         run: |
+          source scripts/logger.sh
+          log_info "Generating MP4 preview..."
           docker run --rm -v "$(pwd):/workdir" -w /workdir \
           jrottenberg/ffmpeg:4.4-ubuntu -i video.mp4 \
           -vf "fps=15,scale=320:-2" -an -c:v libx264 -crf 28 -preset ultrafast -pix_fmt yuv420p \
           preview.mp4
 
+          log_info "Uploading preview to tmpfiles.org..."
           API_RESPONSE=$(curl -F "file=@preview.mp4" https://tmpfiles.org/api/v1/upload)
 
-          PREVIEW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url')
+          RAW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url')
 
-          if [ -z "$PREVIEW_URL" ] || [ "$PREVIEW_URL" == "null"]; then
-            echo "::error::Failed to upload preview to tmpfiles.org."
-            echo "$API_RESPONSE" >&2
+          if [ -z "$RAW_URL" ] || [ "$RAW_URL" == "null"]; then
+            log_fatal "Failed to upload preview to tmpfiles.org. API Response: $API_RESPONSE"
             exit 1
           fi
 
+          PREVIEW_URL=$(echo "$RAW_URL" | sed -e 's|http://|https://|' -e 's|tmpfiles.org/|tmpfiles.org/dl/|')
+
+          log_info "Preview URL: $PREVIEW_URL"
           echo "preview_url=${PREVIEW_URL}" >> "$GITHUB_OUTPUT"
 
       # === DEPLOY STEPS ===
@@ -188,18 +214,23 @@ jobs:
       - name: "Upload module and get download link"
         id: upload
         run: |
+          source scripts/logger.sh
           chmod +x scripts/upload_file.sh
           # Uses filename output from package_module step
+          log_info "Uploading final module to storage provider..."
           DOWNLOAD_LINK=$(scripts/upload_file.sh "${{ steps.package_module.outputs.filename }}")
           echo "download_link=${DOWNLOAD_LINK}" >> "$GITHUB_OUTPUT"
+          log_info "Module upload complete."
       
       - name: "Prepare final post metadata"
         id: post_data
-        env:
+        env:  
           TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
           INPUT_JOB_ID: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
           INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
         run: |
+          source scripts/logger.sh
+          log_info "Generating final post metadata..."
           POST_METADATA=$(jq -n -c \
             --argjson base_meta '${{ steps.parse_metadata.outputs.json_string }}' \
             --arg download_url '${{ steps.upload.outputs.download_link }}' \
@@ -227,6 +258,7 @@ jobs:
           )
 
           echo "post_metadata=$POST_METADATA" >> "$GITHUB_OUTPUT"
+          log_info "Post metadata generated."
 
       - name: "Send 'Completed' status"
         uses: ./.github/actions/send-status
@@ -263,7 +295,9 @@ jobs:
       - name: "Checkout repository"
         uses: actions/checkout@v4
         
-      - name: "Send Failure Notification"
+      - name: "Send Failure via Webhook"
+        id: try_webhook
+        continue-on-error: true
         uses: ./.github/actions/send-status
         env:
           TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
@@ -273,3 +307,29 @@ jobs:
           job_id: ${{ needs.build_and_deploy.outputs.job_id }}
           msg_metadata: ${{ needs.build_and_deploy.outputs.msg_metadata }}
           error_log_b64: ${{ needs.build_and_deploy.outputs.error_log_b64 }}
+
+      - name: Send Failure with Telegram API (Fallback)
+        if: steps.try_webhook.outcome === 'failure'
+        env:
+          BOT_TOKEN: ${{ env.BOT_TOKEN }}
+          MSG_METADATA: ${{ needs.build_and_deploy.outputs.msg_metadata }}
+          ERROR_LOG_B64: ${{ needs.build_and_deploy.outputs.error_log_b64 }}
+        run: |
+          echo "::warning::Webhook send failed. Initiating direct API fallback..."
+          set -e
+          CHAT_ID=$(echo "$MSG_METADATA" | jq -r .chat_id)
+          MESSAGE_ID=$(echo "$MSG_METADATA" | jq -r .message_id)
+          DECODED_LOGS=$(echo "$ERROR_LOG_B64" | base64 -d)
+
+          # Build the simple error message payload
+          MESSAGE_TEXT="❌ Status: Failed.\nMessage: An error occurred and the webhook failed to respond.\n\nError Details:\n$DECODED_LOGS"
+          PAYLOAD=$(jq -n -c \
+            --arg cid "$CHAT_ID" \
+            --arg mid "$MESSAGE_ID" \
+            --arg text "$MESSAGE_TEXT" \
+            '{chat_id: $cid, message_id: $mid, text: $text}')
+
+          # Send directly to Telegram
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
