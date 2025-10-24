@@ -47,7 +47,7 @@ jobs:
         run: |
           source scripts/logger.sh
           log_info "Installing dependencies (jq, curl)..."
-          sudo apt-get update -y > >/dev/null 2>&1
+          sudo apt-get update -y >/dev/null 2>&1
           sudo apt-get install -y jq curl >/dev/null 2>&1
           log_info "Dependencies installed"
 
@@ -254,8 +254,7 @@ jobs:
                   "type": $boot_type
                 }
               }
-            '
-          )
+          ')
 
           echo "post_metadata=$POST_METADATA" >> "$GITHUB_OUTPUT"
           log_info "Post metadata generated."
@@ -319,7 +318,7 @@ jobs:
           set -e
           CHAT_ID=$(echo "$MSG_METADATA" | jq -r .chat_id)
           MESSAGE_ID=$(echo "$MSG_METADATA" | jq -r .message_id)
-          DECODED_LOGS=$(echo "$ERROR_LOG_B64" | base64 -d)
+          DECODED_LOGS=$(echo "$ERROR_LOG_B64" | base64 --decode)
 
           # Build the simple error message payload
           MESSAGE_TEXT="❌ Status: Failed.\nMessage: An error occurred and the webhook failed to respond.\n\nError Details:\n$DECODED_LOGS"
