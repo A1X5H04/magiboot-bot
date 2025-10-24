@@ -47,3 +47,17 @@ export async function groupByUserId(client: TursoClient) {
 
     return mapToModel<GroupByUserIdResults>(rs.rows)
 }
+
+
+export async function findByMessageId(client: TursoClient, message_id: number) {
+    const rs = await client.execute({
+        sql: "SELECT id FROM posts WHERE message_id = ?",
+        args: [message_id]
+    });
+
+    if (rs.rows.length === 0) {
+        return null
+    }
+
+    return mapToModel<Pick<PostModel, "id">>(rs.rows[0]);
+}
