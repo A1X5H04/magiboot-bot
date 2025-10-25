@@ -4,52 +4,46 @@ import { AppContext } from "../types/bot.ts";
 import { TG_CHANNEL_ID } from "../lib/constants.ts"; // Make sure TG_CHANNEL_ID is exported
 import { createTursoClient } from "../lib/turso.ts";
 import * as postRepo from "../repositories/post.ts";
-import * as voteRepo from "../repositories/post_votes.ts";
 
 const UPVOTES = new Set(['❤️', '😍', '👍', '🔥', '👏', '🤩', '🤯']);
 const DOWNVOTES = new Set(['🤬', '😡', '👎', '💩', '🤮', '🤡', '🥴', '😐']);
 
 const db = createTursoClient();
 
-export async function handleMessageReaction(ctx: Filter<AppContext, "message_reaction">) {
+export async function handleReactionCounts(ctx: Filter<AppContext, "message_reaction_count">) {
+    console.log("Handle Message Reaction got called!", ctx.messageReactionCount.chat.id);
     try {
-        const reaction = ctx.messageReaction;
-        const chat_id = reaction.chat.id;
+        const reactionCount = ctx.messageReactionCount;
+        const chat_id = reactionCount.chat.id;
         
         if (String(chat_id) !== TG_CHANNEL_ID) {
+            console.error("Chat ID another than channel ID");
             return;
         }
 
-        const message_id = reaction.message_id;
-        const user_id = reaction.user?.id
+        const message_id = reactionCount.message_id;
 
-        if (!user_id) {
-            console.error("[Handler:Reaction] Failed to get the user id");
-            return;
-        }
-
-        // 2. Find the post in our database
         const post = await postRepo.findByMessageId(db, message_id);
         if (!post) {
             // Not a post we track, ignore.
             return;
         }
 
-        // 3. Determine the new vote value
-        const hasUpvote = reaction.new_reaction.filter(r => r.type === "emoji").some(r => UPVOTES.has(r.emoji))
-        const hasDownvote = reaction.new_reaction.filter(r => r.type === "emoji").some(r => DOWNVOTES.has(r.emoji))
+        let net_score = 0
 
-        let final_vote = 0;
-        if (hasUpvote && !hasDownvote) {
-            final_vote = 1; // User has one or more upvotes, but no downvotes
-        } else if (!hasUpvote && hasDownvote) {
-            final_vote = -1; // User has one or more downvotes, but no upvotes
+        for (const reaction of reactionCount.reactions) {
+            if (reaction.type.type === "emoji") {
+                if (UPVOTES.has(reaction.type.emoji)) {
+                    net_score += reaction.total_count;
+                } else if (DOWNVOTES.has(reaction.type.emoji)) {
+                    net_score -= reaction.total_count;
+                }
+            }
         }
 
-        await voteRepo.upsertUserVote(db, post.id, user_id, final_vote);
+        await postRepo.updateVoteScore(db, post.id, net_score);
 
-
-        console.log(`[Vote] User ${user_id} voted ${final_vote} on Post ${post.id}.`);
+        console.log(`[VoteUpdate] Post ${post.id} (Msg ${message_id}) new net score: ${net_score}`);
     } catch (err) {
         console.error("❌ Error in handleMessageReaction:", err);
     }

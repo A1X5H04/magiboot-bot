@@ -2,7 +2,7 @@ import { Bot } from 'https://esm.sh/grammy';
 import commandsComposer from "./commands.ts";
 import { handleBotErrors } from "../middleware/handle-error.ts";
 import { privateMessageMiddleware } from "../middleware/private-message.ts";
-import { handleMessageReaction } from "../handlers/reactions.ts";
+import { handleReactionCounts } from "../handlers/reactions.ts";
 
 function initBot() {
     const botToken = Deno.env.get("BOT_TOKEN")
@@ -13,10 +13,10 @@ function initBot() {
     }
 
     const bot = new Bot(botToken, { botInfo: JSON.parse(botInfo) });
-
-    bot.use(handleBotErrors)
+    
+    bot.on("message_reaction_count", handleReactionCounts)
     bot.on("message", privateMessageMiddleware);
-    bot.on("message_reaction", handleMessageReaction)
+    bot.use(handleBotErrors)
     bot.use(commandsComposer)
 
     return bot;

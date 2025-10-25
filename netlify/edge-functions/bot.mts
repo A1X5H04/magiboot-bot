@@ -14,7 +14,9 @@ export default async function handler(req: Request) {
       try {
         await bot.api.deleteWebhook({ drop_pending_updates: true })
         
-        await bot.api.setWebhook(`${Deno.env.get("NETLIFY_BASE_URL")}/bot/tg-webhook`)
+        await bot.api.setWebhook(`${Deno.env.get("BOT_BASE_URL")}/bot/tg-webhook`, {
+          allowed_updates: ["message", "message_reaction_count"]
+        })
 
         return new Response("Webhook reset!", { status: 201 });
 
@@ -47,6 +49,8 @@ export default async function handler(req: Request) {
     return new Response("Server Error", { status: 500 });
   }
 }
+
+
 export const config: Config = {
   path: "/bot*"
   
