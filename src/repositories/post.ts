@@ -2,7 +2,12 @@ import { TursoClient } from "../lib/turso.ts";
 import { mapToModel } from "../lib/utils.ts";
 import { PostModel } from "../types/models.ts";
 
-
+type GroupByUserIdResults = {
+    user_id: number;
+    total_posts: number;
+    total_votes: number;
+    total_downloads: number;
+}
 
 export async function create(client: TursoClient, data: Pick<PostModel, "user_id" | "message_id" | "name" | "unique_file_id" | "download_url">) {
     const rs = await client.execute({
@@ -31,15 +36,8 @@ export async function findByNameOrUniqueFileId(client: TursoClient, name: string
     return mapToModel<Pick<PostModel, "name" | "message_id" | "user_id">>(rs.rows[0]);
 }
 
-type GroupByUserIdResults = {
-    user_id: number;
-    total_posts: number;
-    total_votes: number;
-    total_downloads: number;
-}
-
 export async function groupByUserId(client: TursoClient) {
-    const rs = await client.execute("SELECT user_id, COUNT(id) AS total_posts, SUM(votes) AS total_votes, SUM(download_count) AS total_downloads FROM posts GROUP BY user_id ORDER BY total_votes DESC;")
+    const rs = await client.execute("SELECT user_id, COUNT(id) AS total_posts, SUM(votes) AS total_votes, SUM(download_count) AS total_downloads FROM posts GROUP BY user_id ORDER BY total_votes DESC LIMIT 10;")
 
     if (rs.rows.length === 0) {
         return null;
@@ -48,6 +46,17 @@ export async function groupByUserId(client: TursoClient) {
     return mapToModel<GroupByUserIdResults>(rs.rows)
 }
 
+
+export async function updateVoteScore(client: TursoClient, post_id: number, new_score: number) {
+    const rs = await client.execute({
+        sql: "UPDATE posts SET votes = ? WHERE id = ? RETURNING id",
+        args: [new_score, post_id]
+    });
+
+    if (rs.rows.length === 0) {
+        throw new Error(`[updateVoteScore] Failed to update post ID ${post_id}. Post not found.`);
+    }
+}
 
 export async function findByMessageId(client: TursoClient, message_id: number) {
     const rs = await client.execute({
