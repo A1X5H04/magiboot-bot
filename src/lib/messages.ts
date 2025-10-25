@@ -5,6 +5,7 @@ import { JobStatus } from "../types/queue.ts";
 import { createProgressBar } from "./generators.ts";
 import { PostMetadata } from "../types/schema.ts";
 import { TGUserInfo } from "../types/bot.ts";
+import { LeaderboardEntry } from "../services/leaderboard.ts";
 
 type KnownError = Error & {
     code?: string;
@@ -135,6 +136,34 @@ export function createValidationErrorMessage(errors: string[]) {
     errors.forEach(error => {
         message = message.plain("\n• ").plain(error);
     });
+
+    return message;
+}
+
+
+export function createLeaderBoardMessage(entries: LeaderboardEntry[]) {
+    const message = new FormattedString("").b(`🏆 Top 10 Creators`).plain("\n\n");
+
+    if (entries.length === 0) {
+        message.plain("No stats available yet. Go create some bootanimations!");
+        return message;
+    }
+
+    const medals = ["🥇", "🥈", "🥉"];
+
+
+    for (const entry of entries) {
+        const rankIcon = medals[entry.rank - 1] || ` ${entry.rank.toString()}`
+
+        message
+            .plain(rankIcon)
+            .link(entry.user.first_name, `tg://user?id=${entry.user.id}`)
+            .plain("\n")
+            .plain("     •  ")
+            .b(entry.score.toString()).plain(" Score")
+            .plain(" (").plain(entry.total_votes.toString()).plain(" votes, ")
+            .plain(entry.total_downloads.toString()).plain(" downloads)\n");
+    }
 
     return message;
 }
