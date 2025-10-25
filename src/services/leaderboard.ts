@@ -39,7 +39,7 @@ export async function getLeaderboardData(api: Api<RawApi>): Promise<LeaderboardE
             user: userInfos[index], // Match stat[i] with userInfo[i]
             score: calculateScore(stat.total_votes, stat.total_downloads)
         };
-    });
+    }).filter(stat => stat.score > 0);
 
     const sortedData = combinedData.sort((a, b) => b.score - a.score);
 

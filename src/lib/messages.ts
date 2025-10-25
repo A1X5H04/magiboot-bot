@@ -142,10 +142,11 @@ export function createValidationErrorMessage(errors: string[]) {
 
 
 export function createLeaderBoardMessage(entries: LeaderboardEntry[]) {
-    const message = new FormattedString("").b(`🏆 Top 10 Creators`).plain("\n\n");
+    console.log("Leaderboard", entries);
+    let message = new FormattedString("").b(`🏆 Top 10 Creators`).plain("\n\n");
 
     if (entries.length === 0) {
-        message.plain("No stats available yet. Go create some bootanimations!");
+        message = message.plain("No votes yet, go react your favourite bootanimations.");
         return message;
     }
 
@@ -155,7 +156,7 @@ export function createLeaderBoardMessage(entries: LeaderboardEntry[]) {
     for (const entry of entries) {
         const rankIcon = medals[entry.rank - 1] || ` ${entry.rank.toString()}`
 
-        message
+        message = message
             .plain(rankIcon)
             .link(entry.user.first_name, `tg://user?id=${entry.user.id}`)
             .plain("\n")
