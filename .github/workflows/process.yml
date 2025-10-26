@@ -57,7 +57,7 @@ jobs:
           source scripts/logger.sh
           log_info "Parsing workflow metadata..."
           METADATA_JSON='${{ inputs.other_metadata }}'
-          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id, "bootanim_config": .bootanim_config }')
+          PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id, "bootanim_config": .bootanim_config, "tags": .tags }')
           MSG_METADATA=$(echo "${METADATA_JSON}" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
           echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
           echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
@@ -246,6 +246,7 @@ jobs:
                 "creator": { "user_id": $base_meta.creator.id, "name": $base_meta.creator.name },
                 "download_url": $download_url,
                 "preview_url": $preview_url,
+                "tags": $base_meta.tags,
                 "video": { "file_id": "${{ inputs.video }}", "file_unique_id": $base_meta.unique_file_id, "ref_message_id": $base_meta.ref_message_id },
                 "details": {
                   "resolution": { "module": $boot_res, "video": $video_res },
