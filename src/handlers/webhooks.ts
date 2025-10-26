@@ -4,11 +4,15 @@ import { safeParse } from "https://esm.sh/valibot";
 import { AppContext } from "../types/bot.ts";
 import { createBootanimationPost, createStatusMessage } from "../lib/messages.ts";
 import { statusUpdateSchema } from "../schema/webhook-status.ts";
-import { updateJobStatus } from "../services/queue.ts";
-import { createPost } from "../services/post.ts";
+
 import { TG_CHANNEL_ID } from "../lib/constants.ts";
+import { createTursoClient } from "../lib/turso.ts";
+import { updateStatus  } from "../repositories/queue.ts";
+import { create as createPost } from "../repositories/post.ts";
 
 export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, request: Request) {
+    const db = createTursoClient();
+
     if (request.method !== "POST") {
         return new Response("Method Not Allowed", { status: 405 });
     }
@@ -54,21 +58,22 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
             caption_entities: postCaption.entities
         })
 
-        await createPost({
+        await createPost(db, {
             user_id: validatedData.post_metadata.creator.user_id,
             download_url: validatedData.post_metadata.download_url,
             name: validatedData.post_metadata.title,
             message_id: res.message_id,
-            unique_file_id: validatedData.post_metadata.video.file_unique_id
+            unique_file_id: validatedData.post_metadata.video.file_unique_id,
+            tags: validatedData.post_metadata.tags
         })
 
-        await updateJobStatus(validatedData.job_id, validatedData.status);
+        await updateStatus(db, validatedData.job_id, validatedData.status);
     }
 
 
     // Also update job status on failed
     if (validatedData.status === "failed") {
-        await updateJobStatus(validatedData.job_id, validatedData.status);
+        await updateStatus(db, validatedData.job_id, validatedData.status);
     }
 
     return new Response("OK", { status: 200 });

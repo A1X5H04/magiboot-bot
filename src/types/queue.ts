@@ -19,4 +19,5 @@ export interface JobMetadata {
     name: string;
     id: number;
   }
+  tags: string[];
 }
