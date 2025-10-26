@@ -11,11 +11,12 @@ const commandsComposer = new Composer<AppContext>()
 // General Commands
 commandsComposer.command("start", (ctx) => ctx.reply("You called start command."))
 commandsComposer.command("help", (ctx) => ctx.reply("You called help command."))
+commandsComposer.command("leaderboard", handleLeaderboardCommand)
+
 
 // Group Commands
 const commandComposerWithAutoReply = commandsComposer.use(autoQuote() as unknown as Middleware)
 commandComposerWithAutoReply.command(["b", "bootanimation"], handleGroupCreateCommand);
-commandComposerWithAutoReply.command("leaderboard", handleLeaderboardCommand)
 
 
 export default commandsComposer
