@@ -86,5 +86,5 @@ export default async function handler(req: Request) {
 }
 
 export const config: Config = {
-  path: "/bot/sync-downloads",
+  path: "/scheduled/sync-downloads",
 };
