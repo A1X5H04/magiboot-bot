@@ -9,10 +9,19 @@ type GroupByUserIdResults = {
     total_downloads: number;
 }
 
-export async function create(client: TursoClient, data: Pick<PostModel, "user_id" | "message_id" | "name" | "unique_file_id" | "download_url">) {
+type PostForSync = Pick<PostModel, "id" | "name" | "download_count">;
+export type RankedPost = Pick<
+    PostModel, 
+    "id" | "name" | "user_id" | "message_id" | "download_count" | "votes" | "tags"
+>;
+
+export async function create(client: TursoClient, data: Pick<PostModel, "user_id" | "message_id" | "name" | "unique_file_id" | "download_url"> & { tags: string[] }) {
+
+    const tagsJSON = JSON.stringify(data.tags);
+
     const rs = await client.execute({
-        sql: "INSERT INTO posts (user_id, message_id, name, unique_file_id, download_url) VALUES (?, ?, ?, ?, ?) RETURNING id",
-        args: [data.user_id, data.message_id, data.name, data.unique_file_id, data.download_url]
+        sql: "INSERT INTO posts (user_id, message_id, name, unique_file_id, download_url, tags) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        args: [data.user_id, data.message_id, data.name, data.unique_file_id, data.download_url, tagsJSON]
     })
 
     if (rs.rows.length === 0) {
@@ -69,4 +78,37 @@ export async function findByMessageId(client: TursoClient, message_id: number) {
     }
 
     return mapToModel<Pick<PostModel, "id">>(rs.rows[0]);
+}
+
+export async function getAllPostsForSync(client: TursoClient): Promise<PostForSync[] | null> {
+    const rs = await client.execute("SELECT id, name, download_count FROM posts");
+    if (rs.rows.length === 0) {
+        return null;
+    }
+    return mapToModel<PostForSync>(rs.rows);
+}
+
+export async function batchUpdateDownloadCounts(
+    client: TursoClient, 
+    updates: { id: number; newCount: number }[]
+): Promise<void> {
+    if (updates.length === 0) {
+        return;
+    }
+    
+    const tx = await client.transaction("write");
+    try {
+        const statements = updates.map(update => ({
+            sql: "UPDATE posts SET download_count = ? WHERE id = ?",
+            args: [update.newCount, update.id]
+        }));
+        
+        await tx.batch(statements);
+        await tx.commit();
+        
+    } catch (err) {
+        console.error("Failed to batch update download counts, rolling back.", err);
+        await tx.rollback();
+        throw err;
+    }
 }

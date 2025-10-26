@@ -1,23 +1,24 @@
 import { Document, Video } from "https://esm.sh/@grammyjs/types@3.22.2/message.d.ts";
 import { FormattedString } from "https://esm.sh/@grammyjs/parse-mode@2.2.0";
 
-import { addJob } from "../services/queue.ts";
 import { handleJob } from "../services/ci/orchestrator.ts";
-import { getPostByNameOrUniqueId } from "../services/post.ts";
-import { TG_GROUP_ID } from "../lib/constants.ts";
+import { ALLOWED_CATEGORIES, TG_GROUP_ID } from "../lib/constants.ts";
 import { getUserInfo } from "../lib/helpers.ts";
-import { parseBootAnimConfig, runValidations, splitTitleAndConfig } from "../lib/utils.ts";
+import { parseBootAnimConfig, parseCommandArgs, runValidations } from "../lib/utils.ts";
 import { createDuplicatePostErrorMessage, createStatusMessage, createValidationErrorMessage } from "../lib/messages.ts";
 import { checkBootAnimParts, checkDocumentMimeType, checkDuration, checkFileSize, checkIsPortrait, checkVideoMimeType } from "../lib/validators.ts";
 import { AppContext } from "../types/bot.ts";
 import { ValidationRule } from "../types/utils.ts";
+import * as postRepositories from "../repositories/post.ts"
+import { create as addJob } from "../repositories/queue.ts"
+import { createTursoClient } from "../lib/turso.ts";
 
 
 export async function handleGroupCreateCommand(ctx: AppContext) {
+  const db = createTursoClient();
+
   const repliedMessage = ctx.message?.reply_to_message
   const createArgs = ctx.match
-
-  const bootAnimArgs = splitTitleAndConfig(createArgs as string);
 
   if (!repliedMessage) {
     await ctx.reply("You did not replied to any animation, try again.")
@@ -32,21 +33,39 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     return;
   }
 
+
+  const bootAnimArgs = parseCommandArgs(createArgs as string);
   console.log("Boot Animation Arguments", bootAnimArgs);
 
-  if (!bootAnimArgs) {
+  if (!bootAnimArgs || !bootAnimArgs.title || bootAnimArgs.tags.length <= 0) {
     const usageMessage = FormattedString.b("Invalid Arguments! ❌").plain("\n\n")
-      .plain("Please provide your animation's name followed by the optional configuration parts. ")
+      .plain("Please provide your animation's name, at least one category tag, and optional config parts.\n")
       .plain("The name must be the first argument and enclosed in **double quotes** if it contains spaces.\n\n")
       .b("Required Format:\n")
-      .code("/b \"<Animation Name>\" <config.part> <config.part> ...")
+      .code("/b \"<Animation Name>\" <category> <config.part> <config.part> ...")
       .b("\n\nExamples:\n")
-      .italic('- "Cool Animation" 3.loop end.play\n')
-      .italic('- SimpleAnim 5.once 10.c.2.30\n\n')
+      .italic('- "Cool Animation" #minimal #abstrack 3.loop end.play\n')
+      .italic('- SimpleAnim #anime 5.once 10.c.2.30\n\n')
       .b("Tip:").plain(" If your name is one word, quotes are optional.");
 
     await ctx.reply(usageMessage.text, { entities: usageMessage.entities });
     return
+  }
+
+  const validTags = bootAnimArgs.tags.filter(tag => ALLOWED_CATEGORIES.has(tag));
+
+  if (validTags.length === 0) {
+    const errorMsg = FormattedString.b("No Valid Category! 🏷️").plain("\n\n")
+      .plain("You must provide at least one valid category tag.\n\n")
+      .b("Your tags: ")
+      .plain(bootAnimArgs.tags.map(t => `#${t}`).join(' ') || "(None)")
+      .plain("\n")
+      .b("Available: \n")
+      .code(Array.from(ALLOWED_CATEGORIES)
+        .map(c => `#${c}`)
+        .join(', '));
+
+    return await ctx.reply(errorMsg.text, { entities: errorMsg.entities });
   }
 
 
@@ -98,7 +117,7 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
       { entities: validationErrMessage.entities })
   }
 
-  const duplicatePost = await getPostByNameOrUniqueId(bootAnimArgs.title, file.unique_id)
+  const duplicatePost = await postRepositories.findByNameOrUniqueFileId(db, bootAnimArgs.title, file.unique_id)
 
   if (duplicatePost) {
     const userInfo = await getUserInfo(ctx.api, TG_GROUP_ID, duplicatePost.user_id);
@@ -132,10 +151,11 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     unique_file_id: file.unique_id,
     title: bootAnimArgs.title,
     video_ref_message_id: repliedMessage.message_id,
-    bootanim_config: parseBootAnimConfig(bootAnimArgs.config)
+    bootanim_config: parseBootAnimConfig(bootAnimArgs.config),
+    tags: validTags
   })
 
-  const job = await addJob({
+  const job = await addJob(db, {
     message: {
       chatId: ctx.chat.id,
       messageId: message.message_id,
@@ -148,7 +168,8 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     unique_file_id: file.unique_id,
     title: bootAnimArgs.title,
     video_ref_message_id: repliedMessage.message_id,
-    bootanim_config: parseBootAnimConfig(bootAnimArgs.config)
+    bootanim_config: parseBootAnimConfig(bootAnimArgs.config),
+    tags: validTags
   })
 
   if (!job) {

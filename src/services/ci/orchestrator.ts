@@ -1,8 +1,9 @@
+import { makeGitHubProvider } from "./providers/github.ts";
+import * as queueRepository from "../../repositories/queue.ts"
 import { sendStatusUpdate } from "../../lib/helpers.ts";
+import { createTursoClient } from "../../lib/turso.ts";
 import { JobQueueModel } from "../../types/models.ts";
 import { JobMetadata } from "../../types/queue.ts";
-import { getJobById, getNextJob, updateJobStatus } from "../queue.ts";
-import { makeGitHubProvider } from "./providers/github.ts";
 import { CIProvider } from "../../types/ci.ts";
 
 const CI_PROVIDERS = [
@@ -16,6 +17,7 @@ const CI_PROVIDERS = [
     ]
 
 export async function handleJob(jobId?: string) {
+    const db = createTursoClient();
 
     // Find the first available CI provider.
     // In near future add load balancing algorithm.
@@ -35,9 +37,9 @@ export async function handleJob(jobId?: string) {
     let job: JobQueueModel | null = null;
 
     if (jobId) {
-        job = await getJobById(jobId);
+        job = await queueRepository.findById(db, jobId);
     } else {
-        job = await getNextJob();
+        job = await queueRepository.findOldestByStatus(db, "pending");
     }
 
     if (!job) {
@@ -45,7 +47,7 @@ export async function handleJob(jobId?: string) {
         return;
     }
 
-    await updateJobStatus(job.id, "processing");
+    await queueRepository.updateStatus(db, job.id, "processing");
 
     const jobMetadata = job.metadata as unknown as JobMetadata
 
@@ -61,7 +63,8 @@ export async function handleJob(jobId?: string) {
             title: jobMetadata.title,
             creator: jobMetadata.creator,
             ref_message_id: jobMetadata.video_ref_message_id,
-            bootanim_config: jobMetadata.bootanim_config
+            bootanim_config: jobMetadata.bootanim_config,
+            tags: jobMetadata.tags
         })
     });
 
@@ -79,5 +82,8 @@ export async function handleJob(jobId?: string) {
     } else {
         console.log(`Job with id ${job.id} dispatched successfully.`);
     }
+
+
+    db.close();
 
 }

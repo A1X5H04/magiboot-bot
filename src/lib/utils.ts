@@ -152,3 +152,55 @@ export const splitTitleAndConfig = (rawArgs: string | null): { title: string, co
     config: rawConfig.trim() 
   };
 };
+
+
+export function getFilenameFromName(title: string): string {
+    const withDashes = title.replace(/ /g, '-');
+    const safeFilename = withDashes.replace(/[^a-zA-Z0-9_-]/g, '');
+    return `${safeFilename}-magiboot.zip`;
+}
+
+
+export function parseCommandArgs(rawArgs: string | null): { 
+    title: string | null; 
+    tags: string[]; 
+    config: string;
+} | null {
+    if (!rawArgs) {
+        return null;
+    }
+
+    let argsStr = rawArgs.trim();
+    let title: string | null = null;
+
+    const quotedTitleMatch = argsStr.match(/^\s*"(.*?)"\s*(.*)$/s);
+    if (quotedTitleMatch) {
+        title = quotedTitleMatch[1].trim();
+        argsStr = quotedTitleMatch[2].trim();
+    } else {
+        const unquotedTitleMatch = argsStr.match(/^\s*(\S+)\s*(.*)$/s);
+        if (unquotedTitleMatch) {
+            title = unquotedTitleMatch[1];
+            argsStr = unquotedTitleMatch[2].trim();
+        }
+    }
+
+    if (!title) {
+        return { title: null, tags: [], config: "" };
+    }
+
+    const tags: string[] = [];
+    const tagRegex = /(#\w+)/g;
+    
+    const configStr = argsStr.replace(tagRegex, (match) => {
+        
+        tags.push(match.substring(1).toLowerCase());
+        return "";
+    }).trim();
+
+    return {
+        title: title,
+        tags: tags,
+        config: configStr
+    };
+}

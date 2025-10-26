@@ -12,6 +12,7 @@
             user_id: v.number(),
             name: v.string(),
         }),
+        tags: v.array(v.string()),
         download_url: v.pipe(v.string(), v.url()),
         preview_url: v.pipe(v.string(), v.url()),
         video: v.object({
