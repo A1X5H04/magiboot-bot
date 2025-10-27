@@ -142,3 +142,57 @@ export async function getRankedPosts(
 
     return mapToModel<RankedPost>(rs.rows);
 }
+
+
+// Fuzzy search pattern using % operator.
+export async function searchPostsByName(
+    client: TursoClient, 
+    nameQuery: string,
+    limit = 10
+): Promise<RankedPost[] | null> {
+    
+    const rs = await client.execute({
+        sql: `
+            SELECT id, name, user_id, message_id, download_count, votes, tags
+            FROM posts 
+            WHERE name LIKE ? 
+            ORDER BY download_count DESC 
+            LIMIT ?
+        `,
+        args: [`%${nameQuery}%`, limit]
+    });
+
+    if (rs.rows.length === 0) {
+        return null;
+    }
+    return mapToModel<RankedPost>(rs.rows);
+}
+
+export async function searchPostsByTags(
+    client: TursoClient, 
+    tags: string[],
+    limit = 10
+): Promise<RankedPost[] | null> {
+    
+    let sql = `
+        SELECT id, name, user_id, message_id, download_count, votes, tags
+        FROM posts 
+    `;
+    
+    const whereClauses = tags.map(() => "tags LIKE ?");
+    const args: (string | number)[] = tags.map(tag => `%"${tag}"%`);
+
+    if (whereClauses.length > 0) {
+        sql += " WHERE " + whereClauses.join(" AND ");
+    }
+
+    sql += " ORDER BY download_count DESC LIMIT ?";
+    args.push(limit);
+
+    const rs = await client.execute({ sql, args });
+
+    if (rs.rows.length === 0) {
+        return null;
+    }
+    return mapToModel<RankedPost>(rs.rows);
+}

@@ -5,6 +5,7 @@ import { AppContext } from "../types/bot.ts";
 import { handleGroupCreateCommand } from "../handlers/bootanimation.ts";
 import { handleLeaderboardCommand } from "../handlers/leaderboard.ts";
 import { handlePopularCommand, handleTrendingCommand } from "../handlers/ranking.ts";
+import { handleSearchCommand } from "../handlers/search.ts";
 
 
 const commandsComposer = new Composer<AppContext>()
@@ -19,6 +20,7 @@ commandsComposer.command("trending", handleTrendingCommand)
 // Group Commands
 const commandComposerWithAutoReply = commandsComposer.use(autoQuote() as unknown as Middleware)
 commandComposerWithAutoReply.command(["b", "bootanimation"], handleGroupCreateCommand);
+commandComposerWithAutoReply.command("search", handleSearchCommand)
 
 
 export default commandsComposer
