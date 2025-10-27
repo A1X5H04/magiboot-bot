@@ -195,10 +195,11 @@ process_multi_part_config() {
     if [ "$current_part_frame_end" -lt "$last_frame_end" ]; then
        log_fatal "Validation failed: Part $part_index end frame ($current_part_frame_end) is before the previous part's end frame ($last_frame_end)."
     fi
-    if [ "$unit" != "end" ] && [ "$current_part_frame_end" -gt "$video_total_frames" ]; then
-      log_fatal "Validation failed: Part $part_index end ($current_part_frame_end frames) exceeds video duration ($video_total_frames frames)."
-    fi
+    
     if [ "$current_part_frame_end" -gt "$video_total_frames" ]; then
+        if [ "$unit" != "end" ]; then
+            log_warn "Part $part_index end ($current_part_frame_end frames) exceeds video duration. Capping at $video_total_frames frames."
+        fi
         current_part_frame_end=$video_total_frames
     fi
 
@@ -272,8 +273,14 @@ main() {
 
   # This calculation is the total *count* of frames, which now also
   # matches the *index* of the last frame (e.g., 361 frames = 00361.jpg)
+  log_info "Counting actual extracted frames..."
   local total_frames
-  total_frames=$(awk -v dur="$duration" -v fps="$fps" 'BEGIN { printf "%.0f", dur * fps }')
+  total_frames=$(ls -1q "$all_frames_dir" | wc -l)
+
+  if [ "$total_frames" -eq 0 ]; then
+      log_fatal "FFmpeg extracted 0 frames. The video file might be corrupt or empty."
+  fi
+  log_info "Counted $total_frames total frames."
   
   local all_frames_dir="$output_dir/all-frames-temp"
   extract_all_frames "$input_video" "$all_frames_dir"
