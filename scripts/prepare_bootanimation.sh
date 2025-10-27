@@ -40,6 +40,14 @@ validate_and_get_properties() {
     log_fatal "Input video '$input_video' not found!"
   fi
 
+  local json_output
+  json_output=$(ffprobe -v error -select_streams v:0 \
+    -show_entries stream=width,height,r_frame_rate \
+    -show_entries format=duration,size,format_name \
+    -of json "$input_video")
+
+  # Use jq to parse the JSON. Use '// "N/A"' to provide a default
+  # value if a key is missing or null, which prevents read errors.
   local width height fps_fraction duration size_bytes format
   {
     read -r width
@@ -48,24 +56,26 @@ validate_and_get_properties() {
     read -r duration
     read -r size_bytes
     read -r format
-  } < <(ffprobe -v error -select_streams v:0 \
-    -show_entries stream=width,height,r_frame_rate \
-    -show_entries format=duration,size,format_name \
-    -of default=nw=1:nk=1 "$input_video")
+  } < <(echo "$json_output" | jq -r '
+      .streams[0].width // "N/A",
+      .streams[0].height // "N/A",
+      .streams[0].r_frame_rate // "N/A",
+      .format.duration // "N/A",
+      .format.size // "N/A",
+      .format.format_name // "N/A"
+  ')
 
   # --- Robustness Checks ---
-  # Check if we actually got the metadata. Empty values will
-  # cause the script to fail later in calculations.
-  if [ -z "$width" ] || [ -z "$height" ]; then
+  if [ -z "$width" ] || [[ "$width" == "N/A" ]] || [ -z "$height" ] || [[ "$height" == "N/A" ]]; then
     log_fatal "Validation failed: Could not retrieve video resolution (width/height). Is this a valid video file?"
   fi
-  if [ -z "$fps_fraction" ] || [[ "$fps_fraction" == "0/0" ]]; then
+  if [ -z "$fps_fraction" ] || [[ "$fps_fraction" == "0/0" ]] || [[ "$fps_fraction" == "N/A" ]]; then
     log_fatal "Validation failed: Could not retrieve video frame rate (r_frame_rate)."
   fi
   if [ -z "$duration" ] || [[ "$duration" == "N/A" ]]; then
     log_fatal "Validation failed: Could not retrieve video duration."
   fi
-  if [ -z "$size_bytes" ]; then
+  if [ -z "$size_bytes" ] || [[ "$size_bytes" == "N/A" ]]; then
     log_fatal "Validation failed: Could not retrieve file size."
   fi
 
@@ -247,7 +257,8 @@ main() {
   fi
   local input_video="$1"
 
-  export WORKFLOW_LOG_FILE="/workdir/build_log.jsonl"
+  export INTERNAL_DEBUG_LOG="/workdir/build_log.jsonl"
+  export USER_ERROR_LOG="/workdir/user_errors.log"
 
   check_dependencies
 
