@@ -18,7 +18,7 @@ type StatusMessage = {
     status: JobStatus;
     message: string;
     progress: number | undefined;
-    error_log_b64?: string;
+    error_list?: string[];
 }
 
 export interface EnrichedRankedPost extends RankedPost {
@@ -45,16 +45,12 @@ const statusMap = {
     }
 }
 
-export function createStatusMessage({ status, message, progress, error_log_b64 }: StatusMessage) {
-    const statusMessage = FormattedString.b(`${statusMap[status].icon} Status: `).plain(statusMap[status].title).plain("\n")
-        .b("Message: ").plain(message)
+export function createStatusMessage({ status, message, progress, error_list }: StatusMessage) {
+    const statusMessage = FormattedString.b(`${statusMap[status].title} ${statusMap[status].icon}`).plain(`\n${message}`)
 
-
-    if (status === "failed" && error_log_b64) {
+    if (status === "failed" && error_list) {
         try {
-            const logBytes = decodeBase64(error_log_b64)
-            const decodedLogs = new TextDecoder().decode(logBytes);
-            statusMessage.plain("\n\n").b("Error Details: ").plain("\n").plain(decodedLogs);
+            statusMessage.plain("\n\n").b("Error Details: ").plain("\n").plain(error_list.join("\n-"));
         } catch (e) {
             statusMessage.plain("\n\n").b("Error Details:").plain("\n").plain("Failed to decode error log.");
         }
@@ -64,7 +60,7 @@ export function createStatusMessage({ status, message, progress, error_log_b64 }
         return statusMessage;
     }
 
-    return new FormattedString("").concat(statusMessage).plain("\n\n").plain(`Progress: ${createProgressBar(progress ?? 0)}`)
+    return new FormattedString("").concat(statusMessage).plain("\n\n").plain(createProgressBar(progress ?? 0))
 
 }
 

@@ -34,7 +34,7 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
         message: validatedData.message,
         status: validatedData.status,
         progress: validatedData.status === "processing" ? validatedData.progress : undefined,
-        error_log_b64: validatedData.status == "failed" ? validatedData.error_log_b64 : undefined
+        error_list: validatedData.status == "failed" ? validatedData.error_list : undefined
     });
 
     await bot.api.editMessageText(
