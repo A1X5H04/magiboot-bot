@@ -314,7 +314,7 @@ main() {
       "$all_frames_dir" \
       "$output_dir" \
       "$boot_config_json" \
-      "$fps" \
+      "$desc_fps" \
       "$total_frames" \
       "$target_width" \
       "$target_height"
