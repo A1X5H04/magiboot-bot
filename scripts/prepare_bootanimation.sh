@@ -269,9 +269,12 @@ main() {
 
   local properties_string
   properties_string=$(validate_and_get_properties "$input_video")
+
   local video_fps desc_fps target_width target_height duration format resolution
   read -r video_fps desc_fps target_width target_height duration format resolution <<< "$properties_string"
 
+  local all_frames_dir="$output_dir/all-frames-temp"
+  extract_all_frames "$input_video" "$all_frames_dir"
   # This calculation is the total *count* of frames, which now also
   # matches the *index* of the last frame (e.g., 361 frames = 00361.jpg)
   log_info "Counting actual extracted frames..."
@@ -283,8 +286,6 @@ main() {
   fi
   log_info "Counted $total_frames total frames."
   
-  local all_frames_dir="$output_dir/all-frames-temp"
-  extract_all_frames "$input_video" "$all_frames_dir"
 
   local module_type="single-part"
   local boot_config_json
