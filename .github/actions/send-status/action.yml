@@ -79,10 +79,10 @@ runs:
             fi
             ;;
           failed)
-            if [[ -z "$INPUT_ERROR_LIST"]]; then
+            if [[ -z "$INPUT_ERROR_LIST" ]]; then
               echo "❌ Error: 'error_list' input is required for 'failed' status." >&2
               exit 1
-            
+            fi
             # This is the corrected line, now reading from a safe environment variable
             if ! echo "$INPUT_DATA" | jq -e . >/dev/null; then
               echo "❌ Error: 'data' input must be a valid JSON string for 'completed' status." >&2
@@ -139,7 +139,7 @@ runs:
             fi
             ;;
           failed)
-            PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson error_list "$ERROR_LIST" '. + {error_list: $error_list}')
+            PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson error_list "$INPUT_ERROR_LIST" '. + {error_list: $error_list}')
             if [[ -n "$INPUT_JOB_ID" ]]; then
               PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
             fi
