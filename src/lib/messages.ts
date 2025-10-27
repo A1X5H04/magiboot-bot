@@ -178,3 +178,48 @@ export function createLeaderBoardMessage(entries: LeaderboardEntry[]) {
 
     return message;
 }
+
+export function createRankedPostsMessage(
+    posts: EnrichedRankedPost[],
+    title: string
+): FormattedString {
+    let message = new FormattedString("").b(title).plain("\n\n");
+
+    if (posts.length === 0) {
+        message = message.plain("No posts found for this category. Be the first!");
+        return message;
+    }
+
+    const medals = ["🥇", "🥈", "🥉"];
+
+    for (const post of posts) {
+        const rankIcon = medals[post.rank - 1] || ` ${post.rank.toString()}. `;
+        
+        let tags: string[] = [];
+        if (post.tags) {
+            try {
+                tags = JSON.parse(post.tags);
+            } catch (e) { /* ignore invalid json */ }
+        }
+        const tagString = tags.map(t => `#${t}`).join(' ');
+
+        message = message
+            .plain(rankIcon)
+            .link(post.name, `https://t.me/c/${TG_CHANNEL_ID.replace("-100", "")}/${post.message_id}`)
+            .plain("\n")            
+            .plain("     •  ")
+            .b(post.download_count.toString()).plain(" downloads")
+            .plain(" | ")
+            .b(post.votes.toString()).plain(" votes")
+            .plain("\n")
+            .plain("     •  By: ")
+            .link(post.creator.first_name, `tg://user?id=${post.creator.id}`)
+            .plain("\n");
+        
+        if (tagString) {
+            message = message.plain("     •  Tags: ").i(tagString).plain("\n");
+        }
+    }
+
+    return message;
+}

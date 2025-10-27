@@ -112,3 +112,33 @@ export async function batchUpdateDownloadCounts(
         throw err;
     }
 }
+
+
+export async function getRankedPosts(
+    client: TursoClient, 
+    sinceDate: string | null,
+    limit: number
+): Promise<RankedPost[] | null> {
+    
+    let sql = `
+        SELECT id, name, user_id, message_id, download_count, votes, tags
+        FROM posts
+    `;
+    const args: (string | number)[] = [];
+
+    if (sinceDate) {
+        sql += " WHERE created_at >= ?";
+        args.push(sinceDate);
+    }
+
+    sql += " ORDER BY download_count DESC LIMIT ?";
+    args.push(limit);
+
+    const rs = await client.execute({ sql, args });
+
+    if (rs.rows.length === 0) {
+        return null;
+    }
+
+    return mapToModel<RankedPost>(rs.rows);
+}
