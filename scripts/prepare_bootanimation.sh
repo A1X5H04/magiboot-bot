@@ -49,9 +49,25 @@ validate_and_get_properties() {
     read -r size_bytes
     read -r format
   } < <(ffprobe -v error -select_streams v:0 \
-    -show_entries stream=width,height,r_frame_rate,duration \
-    -show_entries format=size,format_name \
+    -show_entries stream=width,height,r_frame_rate \
+    -show_entries format=duration,size,format_name \
     -of default=nw=1:nk=1 "$input_video")
+
+  # --- Robustness Checks ---
+  # Check if we actually got the metadata. Empty values will
+  # cause the script to fail later in calculations.
+  if [ -z "$width" ] || [ -z "$height" ]; then
+    log_fatal "Validation failed: Could not retrieve video resolution (width/height). Is this a valid video file?"
+  fi
+  if [ -z "$fps_fraction" ] || [[ "$fps_fraction" == "0/0" ]]; then
+    log_fatal "Validation failed: Could not retrieve video frame rate (r_frame_rate)."
+  fi
+  if [ -z "$duration" ] || [[ "$duration" == "N/A" ]]; then
+    log_fatal "Validation failed: Could not retrieve video duration."
+  fi
+  if [ -z "$size_bytes" ]; then
+    log_fatal "Validation failed: Could not retrieve file size."
+  fi
 
   log_info "Validating against limits"
   local size_mb 
