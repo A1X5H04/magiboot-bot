@@ -2,84 +2,67 @@
 
 # ==============================================================================
 #
-#  Structured JSON Logger
+#  Dual-Stream Logger (Minimal, Dependency-Free)
 #
-#  Provides functions to write structured JSONL (JSON Lines) logs.
-#  All logs are appended to the file defined by $WORKFLOW_LOG_FILE.
+#  This script provides functions for a dual-logging strategy:
 #
-#  Usage:
-#    export WORKFLOW_LOG_FILE="build.log"
-#    source scripts/logger.sh
-#    log_info "This is an info message"
-#    log_user "This message is for the user"
-#    log_fatal "This is a fatal error"
+#  1. User-Facing Error Log (Plain Text):
+#     - File: $USER_ERROR_LOG (e.g., /github/workspace/user_errors.log)
+#     - Content: Simple, clean error messages for the end-user.
+#     - Used by: `log_fatal`
+#
+#  2. Internal Debug Log (JSONL):
+#     - File: $INTERNAL_DEBUG_LOG (e.g., /github/workspace/build_log.jsonl)
+#     - Content: Structured JSON logs for developer debugging.
+#     - Used by: `log_info`, `log_warn`, `log_fatal`
+#     - Enabled by: `RUN_DEBUG_LOGS="true"`
 #
 # ==============================================================================
 
-: "${WORKFLOW_LOG_FILE:="workflow.log.jsonl"}"
+: "${INTERNAL_DEBUG_LOG:="build_log.jsonl"}"
+: "${USER_ERROR_LOG:="user_errors.log"}"
+: "${RUN_DEBUG_LOGS:="false"}" # Default to 'off' for performance
 
-# --- Internal Log Emitter ---
-# @param $1 Log Level (e.g., INFO, ERROR, USER)
+# --- Internal Log Emitter (for Developer Debug Log) ---
+# @param $1 Log Level (e.g., INFO, WARN, FATAL)
 # @param $2 Message
-_log() {
+_log_internal() {
   local level="$1"
   local message="$2"
   local timestamp
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-  # Create a JSON line and append it to the log file
   jq -n -c \
     --arg level "$level" \
     --arg ts "$timestamp" \
     --arg msg "$message" \
-    '{"level": $level, "ts": $ts, "msg": $msg}' >> "$WORKFLOW_LOG_FILE"
+    '{"level": $level, "ts": $ts, "msg": $msg}' >> "$INTERNAL_DEBUG_LOG"
 }
 
 # --- Public Log Functions ---
 
-# For standard workflow steps
+# For standard workflow steps (e.g., "Starting download...")
+# Only logs if $RUN_DEBUG_LOGS is "true".
 log_info() {
-  _log "INFO" "$1"
+  if [[ "${RUN_DEBUG_LOGS}" == "true" ]]; then
+    _log_internal "INFO" "$1"
+  fi
 }
 
-# For non-fatal warnings
+# For non-fatal warnings (e.g., "Config value 'x' not set, using default.")
+# Only logs if $RUN_DEBUG_LOGS is "true".
 log_warn() {
-  _log "WARN" "$1"
-}
-
-# For messages that should be shown to the end-user on failure
-log_user() {
-  _log "USER" "$1"
-}
-
-# For debug messages (only logs if $RUNNER_DEBUG is true)
-log_debug() {
-  if [[ "${RUNNER_DEBUG}" == "true" ]]; then
-    _log "DEBUG" "$1"
+  if [[ "${RUN_DEBUG_LOGS}" == "true" ]]; then
+    _log_internal "WARN" "$1"
   fi
 }
 
-# For fatal errors that should stop the workflow
 log_fatal() {
-  _log "FATAL" "$1"
-  # Also print to stderr for immediate visibility in GHA logs
-  echo "::error::$1" >&2
+  local user_message="$1"
+
+  echo "${user_message}" >> "$USER_ERROR_LOG"
+  _log_internal "FATAL" "${user_message}"
+  echo "::error::${user_message}" >&2  
+
   exit 1
-}
-
-# --- Helper Function for Error Reporting ---
-
-# Extracts and beautifies logs for the end-user.
-# This is what we'll use in the `notify_failure` job.
-get_user_logs() {
-  if [ ! -f "$WORKFLOW_LOG_FILE" ]; then
-    echo "❌ A fatal error occurred before logs could be written."
-    return
-  fi
-
-  # Read the JSONL file and format it for the user
-  # We select only USER and FATAL logs.
-  jq -r \
-    'if .level == "USER" then "➡️ " + .msg elif .level == "FATAL" then "❌ " + .msg else empty end' \
-    "$WORKFLOW_LOG_FILE"
 }

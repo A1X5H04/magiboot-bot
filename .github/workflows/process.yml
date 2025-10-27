@@ -22,7 +22,9 @@ on:
 env:
   BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   STORAGE_PROVIDER_API_KEY: ${{ secrets.STORAGE_PROVIDER_API_KEY }}
-
+  INTERNAL_DEBUG_LOG: ${{ github.workspace }}/build_log.jsonl
+  USER_ERROR_LOG: ${{ github.workspace }}/user_errors.log
+  RUN_DEBUG_LOG: "false" # "true" for verbose logging
 jobs:
   # =====================================================================================
   # JOB 1: BUILD & DEPLOY (MERGED)
@@ -34,9 +36,11 @@ jobs:
     outputs:
       msg_metadata: ${{ steps.publish_outputs.outputs.msg_metadata }}
       job_id: ${{ steps.publish_outputs.outputs.job_id }}
-      error_log_b64: ${{ steps.publish_outputs.outputs.error_log_b64 }}
+      stage_b64: ${{ steps.publish_outputs.outputs.stage_b64 }}
+      error_json_array_b64: ${{ steps.publish_outputs.outputs.error_json_array_b64 }}
+      error_plain_text_b64: ${{ steps.publish_outputs.outputs.error_plain_text_b64 }}
     env:
-      WORKFLOW_LOG_FILE: ${{ github.workspace }}/build_log.jsonl
+      CURRENT_STAGE: "Workflow Setup"
 
     steps:
       # === SETUP STEPS ===
@@ -77,6 +81,7 @@ jobs:
         id: download
         run: |
           source scripts/logger.sh
+          echo "CURRENT_STAGE=Video Download" >> $GITHUB_ENV
           set -e
           FILE_ID="${{ inputs.video }}"
           BOT_TOKEN="${{ env.BOT_TOKEN }}"
@@ -130,11 +135,14 @@ jobs:
           chmod +x scripts/prepare_bootanimation.sh
           export METADATA_JSON_ENV='${{ steps.parse_metadata.outputs.json_string }}'
           log_info "Starting containerized video processing..."
-          CONTAINER_COMMAND="apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
+          CONTAINER_COMMAND="chmod +x scripts/logger.sh scripts/prepare_bootanimation.sh && apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
           
           # Execute, capturing stdout to variable and stderr to file
           OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir \
           -e METADATA_JSON="$METADATA_JSON_ENV" \
+          -e INTERNAL_DEBUG_LOG \
+          -e USER_ERROR_LOG \
+          -e RUN_DEBUG_LOGS \
           --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
           -c "$CONTAINER_COMMAND")
           
@@ -145,13 +153,32 @@ jobs:
           echo "boot_output_dir_path=${BOOT_DIR}" >> "$GITHUB_OUTPUT"
 
       - name: "Capture Error Log on Failure"
-        if: always() && (failure() || steps.run_processing.outcome == 'failure')
+        if: failure()
         id: capture_error_log
         run: |
           source scripts/logger.sh
           log_info "Capturing user-facing logs for failure report..."
-          USER_LOGS=$(get_user_logs)
-          echo "error_log_b64=$(echo "$USER_LOGS" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+
+          STAGE_NAME="${{ env.CURRENT_STAGE }}"
+          echo "stage=${STAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+          if [ ! -f "$USER_ERROR_LOG" ]; then
+            log_warn "Job failed, but no user error log was found."
+            
+            ERR_MSG="An unknown processing error occurred on stage: $STAGE_NAME"
+            echo "error_json_array=[\"$ERR_MSG\"]" >> "$GITHUB_OUTPUT"
+            echo "error_plain_text=- $ERR_MSG" >> "$GITHUB_OUTPUT"
+          else
+            log_info "Found user errors, formatting for output..."
+            
+            # 1. Format as JSON Array for Webhook
+            ERROR_JSON_ARRAY=$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$USER_ERROR_LOG")
+            echo "error_json_array=${ERROR_JSON_ARRAY}" >> "$GITHUB_OUTPUT"
+            
+            # 2. Format as Plain-Text List for Fallback
+            ERROR_PLAIN_TEXT=$(sed 's/^/- /' "$USER_ERROR_LOG")
+            echo "error_plain_text=${ERROR_PLAIN_TEXT}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: "Send 'Packaging Started' status"
         uses: ./.github/actions/send-status
@@ -167,6 +194,8 @@ jobs:
         id: package_module
         run: |
           source scripts/logger.sh
+          echo "CURRENT_STAGE=Module Packaging" >> $GITHUB_ENV
+
           chmod +x scripts/package_module.sh
           log_info "Packaging final module..."
           MODULE_NAME=$(echo '${{ steps.parse_metadata.outputs.json_string }}' | jq -r '.title')
@@ -215,8 +244,9 @@ jobs:
         id: upload
         run: |
           source scripts/logger.sh
+          echo "CURRENT_STAGE=Module Upload" >> $GITHUB_ENV
+
           chmod +x scripts/upload_file.sh
-          # Uses filename output from package_module step
           log_info "Uploading final module to storage provider..."
           DOWNLOAD_LINK=$(scripts/upload_file.sh "${{ steps.package_module.outputs.filename }}")
           echo "download_link=${DOWNLOAD_LINK}" >> "$GITHUB_OUTPUT"
@@ -230,6 +260,8 @@ jobs:
           INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
         run: |
           source scripts/logger.sh
+          echo "CURRENT_STAGE=Prepare Final Post" >> $GITHUB_ENV
+
           log_info "Generating final post metadata..."
           POST_METADATA=$(jq -n -c \
             --argjson base_meta '${{ steps.parse_metadata.outputs.json_string }}' \
@@ -276,9 +308,12 @@ jobs:
         id: publish_outputs
         if: always() # This step runs even if the job fails
         run: |
-          echo "msg_metadata=${{ steps.parse_metadata.outputs.msg_metadata }}" >> "$GITHUB_OUTPUT"
+          echo msg_metadata='${{ steps.parse_metadata.outputs.msg_metadata }}' >> "$GITHUB_OUTPUT"
           echo "job_id=$(echo '${{ steps.parse_metadata.outputs.json_string }}' | jq -r .jobId)" >> "$GITHUB_OUTPUT"
-          echo "error_log_b64=${{ steps.capture_error_log.outputs.error_log_content }}" >> "$GITHUB_OUTPUT"
+          
+          echo "stage_b64=$(echo -n '${{ steps.capture_error_log.outputs.stage }}' | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          echo "error_json_array_b64=$(echo -n '${{ steps.capture_error_log.outputs.error_json_array }}' | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          echo "error_plain_text_b64=$(echo -n '${{ steps.capture_error_log.outputs.error_plain_text }}' | base64 -w 0)" >> "$GITHUB_OUTPUT"
 
 
   # =====================================================================================
@@ -294,6 +329,15 @@ jobs:
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
+
+      - name: "Decode Errors Outputs"
+        id: decode_errors
+        run: |
+          DECODED_JSON_ARRAY=$(echo "${{ needs.build_and_deploy.outputs.error_json_array_b64 }}" | base64 --decode)
+          if [ -z "$DECODED_JSON_ARRAY" ]; then
+            DECODED_JSON_ARRAY="[]"
+          fi
+          echo "json_array_string=${DECODED_JSON_ARRAY}" >> "$GITHUB_OUTPUT"
         
       - name: "Send Failure via Webhook"
         id: try_webhook
@@ -306,28 +350,30 @@ jobs:
           message: "An error occurred during video processing."
           job_id: ${{ needs.build_and_deploy.outputs.job_id }}
           msg_metadata: ${{ needs.build_and_deploy.outputs.msg_metadata }}
-          error_log_b64: ${{ needs.build_and_deploy.outputs.error_log_b64 }}
+          error_list: ${{ fromJSON(steps.decode_errors.outputs.json_array_string) }}
 
       - name: Send Failure with Telegram API (Fallback)
         if: steps.try_webhook.outcome == 'failure'
         env:
           BOT_TOKEN: ${{ env.BOT_TOKEN }}
           MSG_METADATA: ${{ needs.build_and_deploy.outputs.msg_metadata }}
-          ERROR_LOG_B64: ${{ needs.build_and_deploy.outputs.error_log_b64 }}
+          STAGE_B64: ${{ needs.build_and_deploy.outputs.stage_b64 }}
+          ERROR_PLAIN_TEXT_B64: ${{ needs.build_and_deploy.outputs.error_plain_text_b64 }}
         run: |
           echo "::warning::Webhook send failed. Initiating direct API fallback..."
           set -e
           CHAT_ID=$(echo "$MSG_METADATA" | jq -r .chat_id)
           MESSAGE_ID=$(echo "$MSG_METADATA" | jq -r .message_id)
-          DECODED_LOGS=$(echo "$ERROR_LOG_B64" | base64 --decode)
-
-          # Build the simple error message payload
-          MESSAGE_TEXT="❌ Status: Failed.\nMessage: An error occurred and the webhook failed to respond.\n\nError Details:\n$DECODED_LOGS"
+          
+          STAGE_NAME=$(echo "$STAGE_B64" | base64 --decode)
+          PLAIN_ERRORS=$(echo "$ERROR_PLAIN_TEXT_B64" | base64 --decode)
+          
           PAYLOAD=$(jq -n -c \
             --arg cid "$CHAT_ID" \
             --arg mid "$MESSAGE_ID" \
-            --arg text "$MESSAGE_TEXT" \
-            '{chat_id: $cid, message_id: $mid, text: $text}')
+            --arg stage "$STAGE_NAME" \
+            --arg errors "$PLAIN_ERRORS" \
+            '{chat_id: $cid, message_id: $mid, text: "❌ *Status*: Failed.\nProcessing failed on stage: *\($stage)*\n\n*Errors:*\n\($errors)\n\nReport to @a1x5h04.", parse_mode: "Markdown"}')
 
           # Send directly to Telegram
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
