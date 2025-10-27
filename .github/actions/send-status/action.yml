@@ -20,6 +20,9 @@ inputs:
   progress:
     description: 'A progress percentage (0-100) for "processing" status'
     required: false
+  error_list:
+    description: 'A list of errros for "failed" status'
+    required: false
 
 runs:
   using: "composite"
@@ -33,6 +36,7 @@ runs:
         INPUT_MSG_METADATA: ${{ inputs.msg_metadata }}
         INPUT_DATA: ${{ inputs.data }}
         INPUT_PROGRESS: ${{ inputs.progress }}
+        INPUT_ERROR_LIST: ${{ inputs.error_list }}
       run: |
         # Exit immediately if a command exits with a non-zero status.
         set -e
@@ -73,6 +77,11 @@ runs:
               echo "❌ Error: 'data' input is required for 'completed' status." >&2
               exit 1
             fi
+            ;;
+          failed)
+            if [[ -z "$INPUT_ERROR_LIST"]]; then
+              echo "❌ Error: 'error_list' input is required for 'failed' status." >&2
+              exit 1
             
             # This is the corrected line, now reading from a safe environment variable
             if ! echo "$INPUT_DATA" | jq -e . >/dev/null; then
@@ -98,6 +107,7 @@ runs:
         INPUT_JOB_ID: ${{ inputs.job_id }}
         INPUT_PROGRESS: ${{ inputs.progress }}
         INPUT_DATA: ${{ inputs.data }}
+        INPUT_ERROR_LIST: ${{ inputs.error_list }}
       run: |
         set -e
 
@@ -128,7 +138,13 @@ runs:
               PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
             fi
             ;;
-          pending|failed)
+          failed)
+            PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson error_list "$ERROR_LIST" '. + {error_list: $error_list}')
+            if [[ -n "$INPUT_JOB_ID" ]]; then
+              PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+            fi
+            ;;
+          pending)
             PAYLOAD="$BASE_PAYLOAD"
             if [[ -n "$INPUT_JOB_ID" ]]; then
               PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
