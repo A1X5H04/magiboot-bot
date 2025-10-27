@@ -1,0 +1,608 @@
+# ==============================================================================
+#
+#  Modular Video Processing Workflow (Migrated to Cirrus CI)
+#
+#  This workflow processes a video into a bootanimation in a single,
+#  high-speed task to minimize overhead.
+#
+# ==============================================================================
+
+# --- Define Build Parameters (replaces GHA workflow_dispatch inputs) ---
+build_parameters:
+  VIDEO: ""
+  OTHER_METADATA: "{}" # Default to empty JSON
+
+# --- Define Encrypted Secrets (replaces GHA secrets) ---
+env:
+  TELEGRAM_BOT_TOKEN: ENCRYPTED[!104daba37b8429704fc56c42478d213c88450444296e4a9c9dc14d5a79aa04424a9cf193243f3cdeb920fbc399915f2e!]
+  STORAGE_PROVIDER_API_KEY: ENCRYPTED[!12666edf544a90fbf442a8f6d0965e4c3d4302b517a33e5b6696272915ba933d31172b61dfae0eb86e3701f1d4699ea5!]
+  TELEGRAM_BOT_WEBHOOK_URL: ENCRYPTED[!28e69396beb917b81f6568e715b806634001193043755a7e3ab4b8dfe6e5d896a301a5d6840efb9b7dd7803aa779758a!]
+
+# =====================================================================================
+# TASK 1: BUILD & DEPLOY (MERGED)
+# - This single task handles setup, processing, packaging, and deployment.
+# =====================================================================================
+build_and_deploy_task:
+  name: "Build & Deploy Module"
+  
+  # Use a container with Docker-in-Docker support
+  docker_builder:
+    image: ubuntu:22.04
+    # Enable Cirrus-native Docker layer caching for the `docker pull`
+    docker_layer_cache: true 
+
+  # Replicates `actions/cache` for the .tar file
+  docker_image_cache:
+    folder: docker-image-cache
+    key: ffmpeg-4.4-ubuntu
+
+  # Environment variables for this task
+  environment:
+    # Map build parameters to GHA-style input env vars
+    INPUT_VIDEO: $VIDEO
+    INPUT_OTHER_METADATA: $OTHER_METADATA
+    
+    # GHA env vars
+    CURRENT_STAGE: "Workflow Setup"
+    INTERNAL_DEBUG_LOG: /tmp/build_log.jsonl # Use /tmp instead of workspace
+    USER_ERROR_LOG: /tmp/user_errors.log     # Use /tmp instead of workspace
+    RUN_DEBUG_LOG: "false"
+
+  # Artifacts for the notify_failure_task
+  outputs_artifacts:
+    path: "job_outputs/**"
+
+  # The main script, combining all GHA steps
+  build_script: |
+    #!/bin/bash
+    set -e # Exit on error
+    set -o pipefail # Fail on pipe errors
+    
+    # Create the outputs dir for artifacts
+    mkdir -p job_outputs
+
+    # === Define the 'send-status' action as a shell function ===
+    # This block replicates the logic from your 'action.yml'
+    function send_status() {
+      echo "::group::Sending Status Update: $STATUS"
+      
+      # Local variables for this function from env
+      local INPUT_STATUS="$STATUS"
+      local INPUT_MESSAGE="$MESSAGE"
+      local INPUT_MSG_METADATA="$MSG_METADATA"
+      local INPUT_JOB_ID="$JOB_ID"
+      local INPUT_DATA="$DATA"
+      local INPUT_PROGRESS="$PROGRESS"
+      local INPUT_ERROR_LIST="$ERROR_LIST"
+
+      # --- 1. Validation (from action.yml) ---
+      if [[ -z "$INPUT_MSG_METADATA" ]]; then
+        echo "❌ Error: msg_metadata is required." >&2; return 1;
+      fi
+      if ! echo "$INPUT_MSG_METADATA" | jq -e . >/dev/null; then
+        echo "❌ Error: msg_metadata must be a valid JSON object." >&2; return 1;
+      fi
+      
+      local CHAT_ID=$(echo "$INPUT_MSG_METADATA" | jq -r '.chat_id')
+      local MESSAGE_ID=$(echo "$INPUT_MSG_METADATA" | jq -r '.message_id')
+      if [[ -z "$CHAT_ID" || "$CHAT_ID" == "null" || -z "$MESSAGE_ID" || "$MESSAGE_ID" == "null" ]]; then
+        echo "❌ Error: msg_metadata must contain 'chat_id' and 'message_id'." >&2; return 1;
+      fi
+      
+      case "$INPUT_STATUS" in
+        processing)
+          if [[ -z "$INPUT_PROGRESS" ]]; then
+            echo "❌ Error: 'progress' is required for 'processing'." >&2; return 1;
+          fi ;;
+        completed)
+          if [[ -z "$INPUT_DATA" ]]; then
+            echo "❌ Error: 'data' is required for 'completed'." >&2; return 1;
+          fi
+          if ! echo "$INPUT_DATA" | jq -e . >/dev/null; then
+              echo "❌ Error: 'data' must be valid JSON." >&2; return 1;
+          fi ;;
+        failed)
+          if [[ -z "$INPUT_ERROR_LIST" ]]; then
+            echo "❌ Error: 'error_list' is required for 'failed'." >&2; return 1;
+          fi
+          if ! echo "$INPUT_ERROR_LIST" | jq -e . >/dev/null; then
+              echo "❌ Error: 'error_list' must be valid JSON." >&2; return 1;
+          fi ;;
+      esac
+
+      # --- 2. Generate Payload (from action.yml) ---
+      local BASE_PAYLOAD
+      BASE_PAYLOAD=$(jq -n \
+        --arg status "$INPUT_STATUS" \
+        --arg message "$INPUT_MESSAGE" \
+        --argjson chatId "$CHAT_ID" \
+        --argjson messageId "$MESSAGE_ID" \
+        '{ status: $status, message: $message, tg_metadata: { "chatId": $chatId, "messageId": $messageId } }')
+      
+      local PAYLOAD
+      case "$INPUT_STATUS" in
+        processing)
+          PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson progress "$INPUT_PROGRESS" '. + {progress: $progress}') ;;
+        completed)
+          PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson data "$INPUT_DATA" '. + {post_metadata: $data}')
+          if [[ -n "$INPUT_JOB_ID" ]]; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+          fi ;;
+        failed)
+          PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson error_list "$INPUT_ERROR_LIST" '. + {error_list: $error_list}')
+          if [[ -n "$INPUT_JOB_ID" ]]; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+          fi ;;
+        pending)
+          PAYLOAD="$BASE_PAYLOAD"
+          if [[ -n "$INPUT_JOB_ID" ]]; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+          fi ;;
+        *)
+          echo "❌ Error: Invalid status '$INPUT_STATUS'." >&2; return 1 ;;
+      esac
+      
+      local FINAL_PAYLOAD=$(echo "$PAYLOAD" | jq -c '.')
+
+      # --- 3. Send Payload (from action.yml) ---
+      : "${TELEGRAM_BOT_WEBHOOK_URL?Error: TELEGRAM_BOT_WEBHOOK_URL is not set.}"
+      echo "🚀 Sending notification..."
+      curl --request POST \
+            --header "Content-Type: application/json" \
+            --data "$FINAL_PAYLOAD" \
+            --silent --show-error --fail \
+            "$TELEGRAM_BOT_WEBHOOK_URL"
+      
+      echo "✅ Notification sent successfully."
+      echo "::endgroup::"
+      
+      # Unset local vars for safety
+      unset STATUS MESSAGE MSG_METADATA JOB_ID DATA PROGRESS ERROR_LIST
+    }
+
+    # === GHA Step: Checkout repository ===
+    # (This is done by default in Cirrus CI)
+
+    # === GHA Step: Install dependencies (jq, curl) ===
+    echo "::group::Install dependencies (jq, curl)"
+    source scripts/logger.sh
+    log_info "Installing dependencies (jq, curl)..."
+    apt-get update -y >/dev/null 2>&1
+    apt-get install -y jq curl >/dev/null 2>&1
+    log_info "Dependencies installed"
+    echo "::endgroup::"
+
+    # === GHA Step: Parse and validate metadata ===
+    echo "::group::Parse and validate metadata"
+    source scripts/logger.sh
+    log_info "Parsing workflow metadata..."
+    METADATA_JSON="$INPUT_OTHER_METADATA"
+    
+    # Export vars to be used by subsequent commands in this script
+    export PARSED_META=$(echo "${METADATA_JSON}" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id, "bootanim_config": .bootanim_config, "tags": .tags }')
+    export MSG_METADATA_JSON=$(echo "${METADATA_JSON}" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
+    export JOB_ID_FROM_META=$(echo "$PARSED_META" | jq -r .jobId)
+    
+    log_info "Metadata parsed."
+    echo "::endgroup::"
+
+    # === GHA Step: Send 'Setup Started' status ===
+    STATUS="processing" \
+    MESSAGE="🚀 Workflow initiated. Setting up environment..." \
+    MSG_METADATA="$MSG_METADATA_JSON" \
+    PROGRESS=5 \
+    send_status
+
+    # === GHA Step: Download video file ===
+    echo "::group::Download video file"
+    export CURRENT_STAGE="Video Download"
+    source scripts/logger.sh
+    set -e # Re-enable for this block, as in GHA
+    FILE_ID="$INPUT_VIDEO"
+    log_info "Downloading video file (FileID: $FILE_ID)..."
+    API_RESPONSE=$(curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${FILE_ID}")
+    if [[ "$(echo "$API_RESPONSE" | jq -r '.ok')" != "true" ]]; then
+      log_fatal "Telegram API Error: $(echo "$API_RESPONSE" | jq -r '.description')"
+    fi
+    FILE_PATH=$(echo "$API_RESPONSE" | jq -r '.result.file_path')
+    curl -s -L -o "video.mp4" "https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${FILE_PATH}"
+    log_info "Video downloaded successfully to video.mp4"
+    echo "::endgroup::"
+
+    # === GHA Step: Load or Pull FFmpeg image ===
+    echo "::group::Load or Pull FFmpeg image"
+    source scripts/logger.sh
+    mkdir -p docker-image-cache
+    if [ -f docker-image-cache/ffmpeg.tar ]; then
+      log_info "Loading FFmpeg from cache..."
+      docker load -i docker-image-cache/ffmpeg.tar
+      log_info "FFmpeg loaded."
+    else
+      echo "Pulling FFmpeg from registry..."
+      log_info "Pulling FFmpeg from registry..."
+      docker pull jrottenberg/ffmpeg:4.4-ubuntu
+      docker save jrottenberg/ffmpeg:4.4-ubuntu -o docker-image-cache/ffmpeg.tar
+      log_info "FFmpeg saved to cache."
+    fi
+    echo "::endgroup::"
+    
+    # === GHA Step: Send 'Processing Started' status ===
+    STATUS="processing" \
+    MESSAGE="🎬 Video processing has started..." \
+    MSG_METADATA="$MSG_METADATA_JSON" \
+    PROGRESS=25 \
+    send_status
+    
+    # === GHA Step: Run Processing Script ===
+    echo "::group::Run Processing Script (Capture stdout/stderr)"
+    source scripts/logger.sh
+    chmod +x scripts/prepare_bootanimation.sh
+    export METADATA_JSON_ENV="$PARSED_META"
+    log_info "Starting containerized video processing..."
+    CONTAINER_COMMAND="chmod +x scripts/logger.sh scripts/prepare_bootanimation.sh && apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
+    
+    # Execute and capture stdout
+    OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir \
+    -e METADATA_JSON="$METADATA_JSON_ENV" \
+    -e INTERNAL_DEBUG_LOG \
+    -e USER_ERROR_LOG \
+    -e RUN_DEBUG_LOGS \
+    --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
+    -c "$CONTAINER_COMMAND")
+    
+    log_info "Video processing script finished."
+    
+    # Capture outputs from stdout
+    export BOOT_DIR=$(echo "$OUTPUT_STRING" | grep 'boot_output_dir=' | cut -d'=' -f2)
+    export BOOT_VIDEO_RESOLUTION=$(echo "$OUTPUT_STRING" | grep 'boot_video_resolution=' | cut -d'=' -f2)
+    export BOOT_BOOTANIMATION_RESOLUTION=$(echo "$OUTPUT_STRING" | grep 'boot_bootanimation_resolution=' | cut -d'=' -f2)
+    export BOOT_VIDEO_FPS=$(echo "$OUTPUT_STRING" | grep 'boot_video_fps=' | cut -d'=' -f2)
+    export BOOT_BOOTANIMATION_MODULE_TYPE=$(echo "$OUTPUT_STRING" | grep 'boot_bootanimation_module_type=' | cut -d'=' -f2)
+    export BOOT_VIDEO_DURATION=$(echo "$OUTPUT_STRING" | grep 'boot_video_duration=' | cut -d'=' -f2)
+    
+    echo "::endgroup::"
+    
+    # === GHA Step: Send 'Packaging Started' status ===
+    STATUS="processing" \
+    MESSAGE="📦 Packaging the flashable module..." \
+    MSG_METADATA="$MSG_METADATA_JSON" \
+    PROGRESS=65 \
+    send_status
+    
+    # === GHA Step: Package the flashable module ===
+    echo "::group::Package the flashable module"
+    export CURRENT_STAGE="Module Packaging"
+    source scripts/logger.sh
+    chmod +x scripts/package_module.sh
+    log_info "Packaging final module..."
+    MODULE_NAME=$(echo "$PARSED_META" | jq -r '.title')
+    MODULE_CREATOR=$(echo "$PARSED_META" | jq -r '.creator.name')
+    export FINAL_FILENAME=$(scripts/package_module.sh "$BOOT_DIR" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
+    log_info "Module packaged: $FINAL_FILENAME"
+    echo "::endgroup::"
+    
+    # === GHA Step: Generate and Upload MP4 Preview ===
+    echo "::group::Generate and Upload MP4 Preview"
+    source scripts/logger.sh
+    log_info "Generating MP4 preview..."
+    docker run --rm -v "$(pwd):/workdir" -w /workdir \
+    jrottenberg/ffmpeg:4.4-ubuntu -i video.mp4 \
+    -vf "fps=15,scale=320:-2" -an -c:v libx264 -crf 28 -preset ultrafast -pix_fmt yuv420p \
+    preview.mp4
+
+    log_info "Uploading preview to tmpfiles.org..."
+    API_RESPONSE=$(curl -F "file=@preview.mp4" https://tmpfiles.org/api/v1/upload)
+    RAW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url')
+    if [ -z "$RAW_URL" ] || [ "$RAW_URL" == "null" ]; then
+      log_fatal "Failed to upload preview to tmpfiles.org. API Response: $API_RESPONSE"
+      exit 1
+    fi
+    export PREVIEW_URL=$(echo "$RAW_URL" | sed -e 's|http://|https://|' -e 's|tmpfiles.org/|tmpfiles.org/dl/|')
+    log_info "Preview URL: $PREVIEW_URL"
+    echo "::endgroup::"
+
+    # === GHA Step: Send 'Uploading' status ===
+    STATUS="processing" \
+    MESSAGE="☁️ Uploading module to storage..." \
+    MSG_METADATA="$MSG_METADATA_JSON" \
+    PROGRESS=85 \
+    send_status
+    
+    # === GHA Step: Upload module and get download link ===
+    echo "::group::Upload module and get download link"
+    export CURRENT_STAGE="Module Upload"
+    source scripts/logger.sh
+    chmod +x scripts/upload_file.sh
+    log_info "Uploading final module to storage provider..."
+    export DOWNLOAD_LINK=$(scripts/upload_file.sh "$FINAL_FILENAME")
+    log_info "Module upload complete."
+    echo "::endgroup::"
+    
+    # === GHA Step: Prepare final post metadata ===
+    echo "::group::Prepare final post metadata"
+    export CURRENT_STAGE="Prepare Final Post"
+    source scripts/logger.sh
+    log_info "Generating final post metadata..."
+    export POST_METADATA=$(jq -n -c \
+      --argjson base_meta "$PARSED_META" \
+      --arg download_url "$DOWNLOAD_LINK" \
+      --arg preview_url "$PREVIEW_URL" \
+      --arg video_res "$BOOT_VIDEO_RESOLUTION" \
+      --arg boot_res "$BOOT_BOOTANIMATION_RESOLUTION" \
+      --arg boot_fps "$BOOT_VIDEO_FPS" \
+      --arg boot_type "$BOOT_BOOTANIMATION_MODULE_TYPE" \
+      --arg duration "$BOOT_VIDEO_DURATION" \
+      --arg video_file_id "$INPUT_VIDEO" \
+      '
+        {
+          "title": $base_meta.title,
+          "creator": { "user_id": $base_meta.creator.id, "name": $base_meta.creator.name },
+          "download_url": $download_url,
+          "preview_url": $preview_url,
+          "tags": $base_meta.tags,
+          "video": { "file_id": $video_file_id, "file_unique_id": $base_meta.unique_file_id, "ref_message_id": $base_meta.ref_message_id },
+          "details": {
+            "resolution": { "module": $boot_res, "video": $video_res },
+            "fps": ($boot_fps | tonumber),
+            "duration": ($duration | tonumber | round),
+            "type": $boot_type
+          }
+        }
+    ')
+    log_info "Post metadata generated."
+    echo "::endgroup::"
+
+    # === GHA Step: Send 'Completed' status ===
+    STATUS="completed" \
+    MESSAGE="✅ Success! Your bootanimation is posted on channel." \
+    JOB_ID="$JOB_ID_FROM_META" \
+    MSG_METADATA="$MSG_METADATA_JSON" \
+    DATA="$POST_METADATA" \
+    send_status
+
+  # --- End of main build_script ---
+
+  # === GHA Step: Capture Error Log on Failure (maps to on_failure) ===
+  on_failure:
+    script: |
+      #!/bin/bash
+      set -e # This script must succeed
+      echo "::group::Capture Error Log on Failure"
+      source scripts/logger.sh
+      log_info "Capturing user-facing logs for failure report..."
+      
+      STAGE_NAME="$CURRENT_STAGE" # Get value from failed script's env
+      
+      if [ ! -f "$USER_ERROR_LOG" ]; then
+        log_warn "Job failed, but no user error log was found."
+        ERR_MSG="An unknown processing error occurred on stage: $STAGE_NAME"
+        export ERROR_JSON_ARRAY="[\"$ERR_MSG\"]"
+        export ERROR_PLAIN_TEXT="- $ERR_MSG"
+      else
+        log_info "Found user errors, formatting for output..."
+        export ERROR_JSON_ARRAY=$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$USER_ERROR_LOG")
+        export ERROR_PLAIN_TEXT=$(sed 's/^/- /' "$USER_ERROR_LOG")
+      fi
+      
+      # Save error outputs for the 'always' block
+      echo "$STAGE_NAME" > job_outputs/stage.txt
+      echo "$ERROR_JSON_ARRAY" > job_outputs/error_json_array.txt
+      echo "$ERROR_PLAIN_TEXT" > job_outputs/error_plain_text.txt
+      echo "::endgroup::"
+
+  # === GHA Step: Publish Job Outputs (maps to always) ===
+  always:
+    script: |
+      #!/bin/bash
+      set -e # This script must succeed
+      echo "::group::Publish Job Outputs"
+      
+      # Save outputs for the failure job (these are set in the main script)
+      echo "$MSG_METADATA_JSON" > job_outputs/msg_metadata.txt
+      echo "$JOB_ID_FROM_META" > job_outputs/job_id.txt
+      
+      # Process error files (created in on_failure)
+      if [ -f "job_outputs/stage.txt" ]; then
+        echo $(cat job_outputs/stage.txt | base64 -w 0) > job_outputs/stage_b64.txt
+        echo $(cat job_outputs/error_json_array.txt | base64 -w 0) > job_outputs/error_json_array_b64.txt
+        echo $(cat job_outputs/error_plain_text.txt | base64 -w 0) > job_outputs/error_plain_text_b64.txt
+      else
+        # Create empty/default files if failure didn't run
+        echo "" > job_outputs/stage_b64.txt
+        echo "W10=" > job_outputs/error_json_array_b64.txt # base64 for "[]"
+        echo "" > job_outputs/error_plain_text_b64.txt
+      fi
+      echo "::endgroup::"
+
+# =====================================================================================
+# TASK 2: NOTIFY FAILURE
+# - This task only runs if the main 'build_and_deploy_task' fails.
+# =====================================================================================
+notify_failure_task:
+  name: "Notify on Failure"
+  
+  # Use a basic container, doesn't need Docker-in-Docker
+  container:
+    image: ubuntu:22.04
+  
+  # Task dependencies
+  depends_on: build_and_deploy
+  only_if: failure()
+
+  # Environment for this task (secrets)
+  environment:
+    BOT_TOKEN: $TELEGRAM_BOT_TOKEN
+    TELEGRAM_BOT_WEBHOOK_URL: $TELEGRAM_BOT_WEBHOOK_URL
+  
+  build_script: |
+    #!/bin/bash
+    set -e
+    set -o pipefail
+    
+    # === Define the 'send-status' action as a shell function (DUPLICATE) ===
+    # This logic is duplicated from the first task.
+    function send_status() {
+      echo "::group::Sending Status Update: $STATUS"
+      local INPUT_STATUS="$STATUS"
+      local INPUT_MESSAGE="$MESSAGE"
+      local INPUT_MSG_METADATA="$MSG_METADATA"
+      local INPUT_JOB_ID="$JOB_ID"
+      local INPUT_DATA="$DATA"
+      local INPUT_PROGRESS="$PROGRESS"
+      local INPUT_ERROR_LIST="$ERROR_LIST"
+
+      # --- 1. Validation (from action.yml) ---
+      if [[ -z "$INPUT_MSG_METADATA" ]]; then
+        echo "❌ Error: msg_metadata is required." >&2; return 1;
+      fi
+      if ! echo "$INPUT_MSG_METADATA" | jq -e . >/dev/null; then
+        echo "❌ Error: msg_metadata must be a valid JSON object." >&2; return 1;
+      fi
+      local CHAT_ID=$(echo "$INPUT_MSG_METADATA" | jq -r '.chat_id')
+      local MESSAGE_ID=$(echo "$INPUT_MSG_METADATA" | jq -r '.message_id')
+      if [[ -z "$CHAT_ID" || "$CHAT_ID" == "null" || -z "$MESSAGE_ID" || "$MESSAGE_ID" == "null" ]]; then
+        echo "❌ Error: msg_metadata must contain 'chat_id' and 'message_id'." >&2; return 1;
+      fi
+      case "$INPUT_STATUS" in
+        processing)
+          if [[ -z "$INPUT_PROGRESS" ]]; then
+            echo "❌ Error: 'progress' is required for 'processing'." >&2; return 1;
+          fi ;;
+        completed)
+          if [[ -z "$INPUT_DATA" ]]; then
+            echo "❌ Error: 'data' is required for 'completed'." >&2; return 1;
+          fi
+          if ! echo "$INPUT_DATA" | jq -e . >/dev/null; then
+              echo "❌ Error: 'data' must be valid JSON." >&2; return 1;
+          fi ;;
+        failed)
+          if [[ -z "$INPUT_ERROR_LIST" ]]; then
+            echo "❌ Error: 'error_list' is required for 'failed'." >&2; return 1;
+          fi
+          if ! echo "$INPUT_ERROR_LIST" | jq -e . >/dev/null; then
+              echo "❌ Error: 'error_list' must be valid JSON." >&2; return 1;
+          fi ;;
+      esac
+
+      # --- 2. Generate Payload (from action.yml) ---
+      local BASE_PAYLOAD
+      BASE_PAYLOAD=$(jq -n \
+        --arg status "$INPUT_STATUS" \
+        --arg message "$INPUT_MESSAGE" \
+        --argjson chatId "$CHAT_ID" \
+        --argjson messageId "$MESSAGE_ID" \
+        '{ status: $status, message: $message, tg_metadata: { "chatId": $chatId, "messageId": $messageId } }')
+      local PAYLOAD
+      case "$INPUT_STATUS" in
+        processing)
+          PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson progress "$INPUT_PROGRESS" '. + {progress: $progress}') ;;
+        completed)
+          PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson data "$INPUT_DATA" '. + {post_metadata: $data}')
+          if [[ -n "$INPUT_JOB_ID" ]]; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+          fi ;;
+        failed)
+          PAYLOAD=$(echo "$BASE_PAYLOAD" | jq --argjson error_list "$INPUT_ERROR_LIST" '. + {error_list: $error_list}')
+          if [[ -n "$INPUT_JOB_ID" ]]; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+          fi ;;
+        pending)
+          PAYLOAD="$BASE_PAYLOAD"
+          if [[ -n "$INPUT_JOB_ID" ]]; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg jobId "$INPUT_JOB_ID" '. + {job_id: $jobId}')
+          fi ;;
+        *)
+          echo "❌ Error: Invalid status '$INPUT_STATUS'." >&2; return 1 ;;
+      esac
+      local FINAL_PAYLOAD=$(echo "$PAYLOAD" | jq -c '.')
+
+      # --- 3. Send Payload (from action.yml) ---
+      : "${TELEGRAM_BOT_WEBHOOK_URL?Error: TELEGRAM_BOT_WEBHOOK_URL is not set.}"
+      echo "🚀 Sending notification..."
+      curl --request POST \
+            --header "Content-Type: application/json" \
+            --data "$FINAL_PAYLOAD" \
+            --silent --show-error --fail \
+            "$TELEGRAM_BOT_WEBHOOK_URL"
+      echo "✅ Notification sent successfully."
+      echo "::endgroup::"
+    }
+
+    # === GHA Step: Install dependencies ===
+    echo "::group::Install dependencies (jq, curl)"
+    apt-get update -y >/dev/null 2>&1
+    apt-get install -y jq curl >/dev/null 2>&1
+    echo "::endgroup::"
+    
+    # === Load artifacts from dependent job ===
+    echo "::group::Load Artifacts"
+    # Artifacts are downloaded to ../<task_name>/<artifact_path>
+    ARTIFACT_DIR="../build_and_deploy/job_outputs"
+    
+    if [ ! -d "$ARTIFACT_DIR" ]; then
+      echo "::error::Artifact directory $ARTIFACT_DIR not found!"
+      exit 1
+    fi
+    
+    # Load outputs
+    MSG_METADATA_JSON=$(cat "${ARTIFACT_DIR}/msg_metadata.txt")
+    JOB_ID_FROM_META=$(cat "${ARTIFACT_DIR}/job_id.txt")
+    
+    # Base64 outputs for errors
+    ERROR_JSON_ARRAY_B64=$(cat "${ARTIFACT_DIR}/error_json_array_b64.txt")
+    STAGE_B64=$(cat "${ARTIFACT_DIR}/stage_b64.txt")
+    ERROR_PLAIN_TEXT_B64=$(cat "${ARTIFACT_DIR}/error_plain_text_b64.txt")
+    
+    echo "Artifacts loaded."
+    echo "::endgroup::"
+
+    # === GHA Step: Decode Errors Outputs ===
+    echo "::group::Decode Errors"
+    DECODED_JSON_ARRAY=$(echo "$ERROR_JSON_ARRAY_B64" | base64 --decode)
+    if [ -z "$DECODED_JSON_ARRAY" ]; then
+      DECODED_JSON_ARRAY="[]"
+    fi
+    echo "Errors decoded."
+    echo "::endgroup::"
+    
+    # === GHA Step: Send Failure via Webhook (Try) ===
+    # This replicates `continue-on-error: true`
+    echo "::group::Attempting Webhook Send"
+    set +e # Disable exit on error
+    STATUS="failed" \
+    MESSAGE="An error occurred during video processing." \
+    JOB_ID="$JOB_ID_FROM_META" \
+    MSG_METADATA="$MSG_METADATA_JSON" \
+    ERROR_LIST="$DECODED_JSON_ARRAY" \
+    send_status
+    
+    WEBHOOK_SEND_STATUS=$? # Capture exit code
+    set -e # Re-enable exit on error
+    echo "::endgroup::"
+
+    # === GHA Step: Send Failure with Telegram API (Fallback) ===
+    # This maps to `if: steps.try_webhook.outcome == 'failure'`
+    if [ $WEBHOOK_SEND_STATUS -ne 0 ]; then
+      echo "::warning::Webhook send failed. Initiating direct API fallback..."
+      echo "::group::Fallback: Send Failure via Telegram API"
+      set -e 
+      
+      CHAT_ID=$(echo "$MSG_METADATA_JSON" | jq -r .chat_id)
+      MESSAGE_ID=$(echo "$MSG_METADATA_JSON" | jq -r .message_id)
+      
+      STAGE_NAME=$(echo "$STAGE_B64" | base64 --decode)
+      PLAIN_ERRORS=$(echo "$ERROR_PLAIN_TEXT_B64" | base64 --decode)
+      
+      PAYLOAD=$(jq -n -c \
+        --arg cid "$CHAT_ID" \
+        --arg mid "$MESSAGE_ID" \
+        --arg stage "$STAGE_NAME" \
+        --arg errors "$PLAIN_ERRORS" \
+        '{chat_id: $cid, message_id: $mid, text: "❌ *Status*: Failed.\nProcessing failed on stage: *\($stage)*\n\n*Errors:*\n\($errors)\n\nReport to @a1x5h04.", parse_mode: "Markdown"}')
+
+      # Send directly to Telegram
+      curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD"
+      echo "::endgroup::"
+    fi
