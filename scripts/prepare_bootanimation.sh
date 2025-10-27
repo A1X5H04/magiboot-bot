@@ -100,14 +100,15 @@ validate_and_get_properties() {
     log_fatal "Validation failed: Video framerate ($fps_value FPS) exceeds the maximum of $MAX_FPS FPS."
   fi
 
-  local fps target_width target_height resolution
-  fps=$(printf "%.0f" "$fps_value")
+  local video_fps desc_fps target_width target_height resolution
+  video_fps=$fps_value
+  desc_fps=$(printf "%.0f" "$video_fps")
   target_width='1080'
   target_height='1920'
   resolution="${width}x${height}"
 
-  log_info "Validation passed. Duration=$duration, FPS=$fps, Resolution=${resolution}, Format=$format."
-  echo "$fps $target_width $target_height $duration $format $resolution"
+  log_info "Validation passed. Duration=$duration, FPS=$video_fps, Resolution=${resolution}, Format=$format."
+  echo "$video_fps $desc_fps $target_width $target_height $duration $format $resolution"
 }
 
 
@@ -268,8 +269,8 @@ main() {
 
   local properties_string
   properties_string=$(validate_and_get_properties "$input_video")
-  local fps target_width target_height duration format resolution
-  read -r fps target_width target_height duration format resolution <<< "$properties_string"
+  local video_fps desc_fps target_width target_height duration format resolution
+  read -r video_fps desc_fps target_width target_height duration format resolution <<< "$properties_string"
 
   # This calculation is the total *count* of frames, which now also
   # matches the *index* of the last frame (e.g., 361 frames = 00361.jpg)
@@ -302,7 +303,7 @@ main() {
         log_info "No frames were extracted."
     fi
 
-    create_single_part_desc_txt "$output_dir" "$target_width" "$target_height" "$fps"
+    create_single_part_desc_txt "$output_dir" "$target_width" "$target_height" "$desc_fps"
     
   else
     log_info "Found 'bootanim_config'. Processing multi-part animation..."
@@ -326,11 +327,11 @@ main() {
   cat <<EOF
 boot_output_dir=$output_dir
 boot_video_duration=$duration
-boot_video_fps=$fps
+boot_video_fps=$video_fps
 boot_video_resolution=$resolution
 boot_video_format=$format
 boot_bootanimation_resolution=${target_width}x${target_height}
-boot_bootanimation_fps=$fps
+boot_bootanimation_fps=$desc_fps
 boot_bootanimation_module_type=$module_type
 EOF
 }
