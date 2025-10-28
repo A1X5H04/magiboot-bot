@@ -162,15 +162,20 @@ jobs:
           -e METADATA_JSON="$METADATA_JSON_ENV" \
           -e INTERNAL_DEBUG_LOG \
           -e USER_ERROR_LOG \
-          -e RUN_DEBUG_LOG \ # FIX: Corrected typo from RUN_DEBUG_LOGS
+          -e RUN_DEBUG_LOG \
           --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
           -c "$CONTAINER_COMMAND")
           
           log_info "Video processing script finished."
-          
-          echo "$OUTPUT_STRING" >> "$GITHUB_OUTPUT"
-          BOOT_DIR=$(echo "$OUTPUT_STRING" | grep 'boot_output_dir=' | cut -d'=' -f2)
-          echo "boot_output_dir_path=${BOOT_DIR}" >> "$GITHUB_OUTPUT"
+          while IFS='=' read -r key value; do
+            if [ -n "$key" ] && [ -n "$value" ]; then
+              echo "$key=$value" >> "$GITHUB_OUTPUT"
+              if [ "$key" == "boot_output_dir" ]; then
+                # Ensure the one required for the next step is named correctly
+                echo "boot_output_dir_path=$value" >> "$GITHUB_OUTPUT"
+              fi
+            fi
+          done <<< "$OUTPUT_STRING"
 
       - name: "Capture Error Log on Failure"
         if: failure()
@@ -310,6 +315,7 @@ jobs:
         run: |
           source scripts/logger.sh
           echo "CURRENT_STAGE=Prepare Final Post" >> $GITHUB_ENV
+          
 
           log_info "Generating final post metadata..."
           # Now, the jq command safely reads from env vars.
@@ -340,6 +346,7 @@ jobs:
               }
           ')
 
+          echo "job_id=$(echo "$BASE_META" | jq -r .jobId)" >> "$GITHUB_OUTPUT"
           echo "post_metadata=$POST_METADATA" >> "$GITHUB_OUTPUT"
           log_info "Post metadata generated."
 
@@ -350,7 +357,7 @@ jobs:
         with:
           status: "completed"
           message: "✅ Success! Your bootanimation is posted on channel."
-          job_id: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
+          job_id: ${{ steps.post_data.outputs.job_id }}
           msg_metadata: ${{ steps.parse_metadata.outputs.msg_metadata }}
           data: ${{ steps.post_data.outputs.post_metadata }}
 
@@ -358,13 +365,19 @@ jobs:
       - name: "Publish Job Outputs"
         id: publish_outputs
         if: always() # This step runs even if the job fails
+        env:
+          MSG_METADATA: '${{ steps.parse_metadata.outputs.msg_metadata }}'
+          META_JSON: '${{ steps.parse_metadata.outputs.json_string }}'
+          STAGE_NAME: '${{ steps.capture_error_log.outputs.stage }}'
+          ERROR_JSON: '${{ steps.capture_error_log.outputs.error_json_array }}'
+          ERROR_PLAIN: '${{ steps.capture_error_log.outputs.error_plain_text }}'
         run: |
-          echo msg_metadata='${{ steps.parse_metadata.outputs.msg_metadata }}' >> "$GITHUB_OUTPUT"
-          echo "job_id=$(echo '${{ steps.parse_metadata.outputs.json_string }}' | jq -r .jobId)" >> "$GITHUB_OUTPUT"
+          echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
+          echo "job_id=$(echo "$META_JSON" | jq -r .jobId)" >> "$GITHUB_OUTPUT"
           
-          echo "stage_b64=$(echo -n '${{ steps.capture_error_log.outputs.stage }}' | base64 -w 0)" >> "$GITHUB_OUTPUT"
-          echo "error_json_array_b64=$(echo -n '${{ steps.capture_error_log.outputs.error_json_array }}' | base64 -w 0)" >> "$GITHUB_OUTPUT"
-          echo "error_plain_text_b64=$(echo -n '${{ steps.capture_error_log.outputs.error_plain_text }}' | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          echo "stage_b64=$(echo -n "$STAGE_NAME" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          echo "error_json_array_b64=$(echo -n "$ERROR_JSON" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          echo "error_plain_text_b64=$(echo -n "$ERROR_PLAIN" | base64 -w 0)" >> "$GITHUB_OUTPUT"
 
 
   # =====================================================================================
