@@ -208,18 +208,30 @@ jobs:
         id: upload_preview
         run: |
           source scripts/logger.sh
+          set -e 
+
           log_info "Generating MP4 preview..."
           docker run --rm -v "$(pwd):/workdir" -w /workdir \
-          jrottenberg/ffmpeg:4.4-ubuntu -i video.mp4 \
-          -vf "fps=15,scale=320:-2" -an -c:v libx264 -crf 28 -preset ultrafast -pix_fmt yuv420p \
-          preview.mp4
+          jrottenberg/ffmpeg:4.4-ubuntu \
+          -v error -hwaccel auto -i video.mp4 \
+          -vf "fps=15,scale=320:-2,format=yuv420p" \
+          -an -c:v libx264 -crf 28 -preset ultrafast \
+          -movflags +faststart preview.mp4
+
+          if [ ! -f "preview.mp4" ]; then
+            log_fatal "FFmpeg failed to generate preview.mp4."
+          fi
 
           log_info "Uploading preview to tmpfiles.org..."
-          API_RESPONSE=$(curl -F "file=@preview.mp4" https://tmpfiles.org/api/v1/upload)
+          API_RESPONSE=$(curl --fail -s -F "file=@preview.mp4" https://tmpfiles.org/api/v1/upload)
 
           RAW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url')
 
-          if [ -z "$RAW_URL" ] || [ "$RAW_URL" == "null"]; then
+          if ! echo "$API_RESPONSE" | jq -e . > /dev/null; then
+              log_fatal "Failed to upload to tmpfiles.org or received non-JSON response. API Response: $API_RESPONSE"
+          fi
+
+          if [ -z "$RAW_URL" ] || [ "$RAW_URL" == "null" ]; then
             log_fatal "Failed to upload preview to tmpfiles.org. API Response: $API_RESPONSE"
             exit 1
           fi
@@ -350,7 +362,7 @@ jobs:
           message: "An error occurred during video processing."
           job_id: ${{ needs.build_and_deploy.outputs.job_id }}
           msg_metadata: ${{ needs.build_and_deploy.outputs.msg_metadata }}
-          error_list: ${{ fromJSON(steps.decode_errors.outputs.json_array_string) }}
+          error_list: ${{ steps.decode_errors.outputs.json_array_string }}
 
       - name: Send Failure with Telegram API (Fallback)
         if: steps.try_webhook.outcome == 'failure'
