@@ -14,29 +14,28 @@
 # --- Strict Mode ---
 set -eo pipefail
 
+# FIX: Source the logger script for robust logging
+# Ensure this path is correct relative to the execution directory in the workflow
+if [ -f "scripts/logger.sh" ]; then
+  source "scripts/logger.sh"
+else
+  # Fallback logger if script is not found (prints to stderr and exits)
+  log_fatal() { echo "❌ FATAL: $1" >&2; exit 1; }
+  log_info() { echo "INFO: $1" >&2; }
+fi
+
+
 # --- Helper Functions ---
 
-##
-# Logs an informational message to stderr.
-#
-log_info() {
-  echo "INFO: $1" >&2
-}
-
-##
-# Logs an error message to stderr and exits with a non-zero status.
-#
-log_error() {
-  echo "❌ ERROR: $1" >&2
-  exit 1
-}
+# FIX: Removed redundant log_info/log_error functions.
+# We will now use log_info() and log_fatal() from logger.sh
 
 ##
 # Prints usage information and exits.
 #
 usage() {
-  log_error "Usage: $0 <source_dir> <template_dir> --module-name \"Name\" --module-creator \"Creator\""
-  exit 1
+  # FIX: Use log_fatal to ensure error is captured
+  log_fatal "Usage: $0 <source_dir> <template_dir> --module-name \"Name\" --module-creator \"Creator\""
 }
 
 # --- Main Execution ---
@@ -52,10 +51,12 @@ main() {
   shift 2 # Consume the positional arguments, leaving the flags
 
   if [ ! -d "$BOOTANIMATION_SOURCE_DIR" ]; then
-    log_error "Boot animation source directory not found at '$BOOTANIMATION_SOURCE_DIR'"
+    # FIX: Use log_fatal
+    log_fatal "Boot animation source directory not found at '$BOOTANIMATION_SOURCE_DIR'"
   fi
   if [ ! -d "$MODULE_TEMPLATE_DIR" ]; then
-    log_error "Module template directory not found at '$MODULE_TEMPLATE_DIR'"
+    # FIX: Use log_fatal
+    log_fatal "Module template directory not found at '$MODULE_TEMPLATE_DIR'"
   fi
 
   # --- 2. Parse Flags ---
@@ -73,16 +74,16 @@ main() {
         shift 2
         ;;
       *)
-        log_error "Unknown flag: $1"
-        usage
+        # FIX: Use log_fatal
+        log_fatal "Unknown flag: $1"
         ;;
     esac
   done
 
   # Validate that flags were provided
   if [[ -z "$NEW_MODULE_NAME" || -z "$NEW_MODULE_CREATOR" ]]; then
-    log_error "Both --module-name and --module-creator flags are required."
-    usage
+    # FIX: Use log_fatal
+    log_fatal "Both --module-name and --module-creator flags are required."
   fi
 
   # --- 3. Setup Workspace & Filename ---
@@ -100,7 +101,8 @@ main() {
   # --- 4. Create bootanimation.zip ---
   log_info "Creating bootanimation.zip with store compression (-0)..."
   local BOOTANIMATION_ZIP_PATH="$TEMP_DIR/bootanimation.zip"
-  (cd "$BOOTANIMATION_SOURCE_DIR" && zip -0qr "$BOOTANIMATION_ZIP_PATH" .) || log_error "Failed to create bootanimation.zip"
+  # FIX: Use log_fatal
+  (cd "$BOOTANIMATION_SOURCE_DIR" && zip -0qr "$BOOTANIMATION_ZIP_PATH" .) || log_fatal "Failed to create bootanimation.zip"
 
   # --- 5. Assemble and Configure the Module ---
   log_info "Assembling the flashable module..."
@@ -112,17 +114,29 @@ main() {
   local MODULE_PROP_PATH="$STAGING_DIR/module.prop"
   
   if [ ! -f "$MODULE_PROP_PATH" ]; then
-    log_error "The module template directory must contain a 'module.prop' file."
+    # FIX: Use log_fatal
+    log_fatal "The module template directory must contain a 'module.prop' file."
   fi
   
   # Combine name and creator for the 'name' field as requested
   local NEW_DESCRIPTION="A custom bootanimation module by Magiboot. Animation By: $NEW_MODULE_CREATOR."
   
-  # Update the module.prop file using sed
-  # Using '|' as a separator for sed to handle special characters in names
-  sed -i "s|^name=.*|name=$NEW_MODULE_NAME|" "$MODULE_PROP_PATH"
-  sed -i "s|^author=.*|author=a1x5h04|" "$MODULE_PROP_PATH"
-  sed -i "s|^description=.*|description=$NEW_DESCRIPTION|" "$MODULE_PROP_PATH"
+  # FIX: Use a safe grep/echo pattern instead of `sed` to avoid injection errors.
+  # This is far more robust.
+  local TEMP_PROP
+  TEMP_PROP=$(mktemp)
+  
+  {
+    grep -v "^name=" "$MODULE_PROP_PATH"
+    grep -v "^author=" "$MODULE_PROP_PATH"
+    grep -v "^description=" "$MODULE_PROP_PATH"
+    echo "name=$NEW_MODULE_NAME"
+    echo "author=a1x5h04"
+    echo "description=$NEW_DESCRIPTION"
+  } > "$TEMP_PROP"
+  
+  mv "$TEMP_PROP" "$MODULE_PROP_PATH"
+
   
   # Place the bootanimation.zip into the magiboot folder.
   mkdir -p "$STAGING_DIR/common/magiboot/" # Create directory if doesn't exist.
@@ -131,7 +145,8 @@ main() {
 
   # --- 6. Create the Final Module Zip ---
   log_info "Compressing the final module zip..."
-  (cd "$STAGING_DIR" && zip -r9q "../$FINAL_MODULE_NAME" .) || log_error "Failed to package the final module zip."
+  # FIX: Use log_fatal
+  (cd "$STAGING_DIR" && zip -r9q "../$FINAL_MODULE_NAME" .) || log_fatal "Failed to package the final module zip."
   mv "$TEMP_DIR/$FINAL_MODULE_NAME" .
 
   log_info "✅ Successfully packaged module: $FINAL_MODULE_NAME"

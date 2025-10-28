@@ -32,11 +32,17 @@ _log_internal() {
   local timestamp
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-  jq -n -c \
-    --arg level "$level" \
-    --arg ts "$timestamp" \
-    --arg msg "$message" \
-    '{"level": $level, "ts": $ts, "msg": $msg}' >> "$INTERNAL_DEBUG_LOG"
+  # FIX: Check for jq. If not found, write a plain-text log.
+  if command -v jq >/dev/null 2>&1; then
+    jq -n -c \
+      --arg level "$level" \
+      --arg ts "$timestamp" \
+      --arg msg "$message" \
+      '{"level": $level, "ts": $ts, "msg": $msg}' >> "$INTERNAL_DEBUG_LOG"
+  else
+    # Fallback if jq is missing
+    echo "[$timestamp] [$level] $message" >> "$INTERNAL_DEBUG_LOG"
+  fi
 }
 
 # --- Public Log Functions ---
@@ -57,12 +63,20 @@ log_warn() {
   fi
 }
 
+# For critical, user-facing errors (e.g., "Video duration exceeds 30s.")
+# This *always* logs to the internal log, regardless of $RUN_DEBUG_LOGS.
 log_fatal() {
   local user_message="$1"
 
+  # 1. Write to the simple user-facing log
   echo "${user_message}" >> "$USER_ERROR_LOG"
+  
+  # 2. Write to the internal developer log
   _log_internal "FATAL" "${user_message}"
+  
+  # 3. Write to GitHub Actions stderr to fail the step
   echo "::error::${user_message}" >&2  
 
+  # 4. Exit the script
   exit 1
 }

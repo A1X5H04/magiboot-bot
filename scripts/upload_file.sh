@@ -13,25 +13,22 @@
 # --- Strict Mode ---
 set -eo pipefail
 
+# FIX: Source the logger script for robust logging
+if [ -f "scripts/logger.sh" ]; then
+  source "scripts/logger.sh"
+else
+  # Fallback logger if script is not found (prints to stderr and exits)
+  log_fatal() { echo "❌ FATAL: $1" >&2; exit 1; }
+  log_info() { echo "INFO: $1" >&2; }
+fi
+
 # --- Configuration ---
 BASE_URL="https://cloudfam.io/"
 
 # --- Helper Functions ---
 
-##
-# Logs an informational message to stderr.
-#
-log_info() {
-  echo "INFO: $1" >&2
-}
-
-##
-# Logs an error message to stderr and exits with a non-zero status.
-#
-log_error() {
-  echo "❌ ERROR: $1" >&2
-  exit 1
-}
+# FIX: Removed redundant log_info/log_error functions.
+# We will now use log_info() and log_fatal() from logger.sh
 
 # --- Core Logic Functions ---
 
@@ -39,14 +36,15 @@ log_error() {
 # Checks for required system dependencies (curl, jq, file).
 #
 check_dependencies() {
-  command -v curl >/dev/null 2>&1 || log_error "Dependency 'curl' is not installed."
-  command -v jq >/dev/null 2>&1 || log_error "Dependency 'jq' is not installed."
-  command -v file >/dev/null 2>&1 || log_error "Dependency 'file' is not installed."
+  # FIX: Use log_fatal
+  command -v curl >/dev/null 2>&1 || log_fatal "Dependency 'curl' is not installed."
+  command -v jq >/dev/null 2>&1 || log_fatal "Dependency 'jq' is not installed."
+  command -v file >/dev/null 2>&1 || log_fatal "Dependency 'file' is not installed."
 }
 
 ##
 # Step 1: Requests a secure upload URL from the API.
-# Outputs the UPLOAD_URL and UPLOAD_KEY on a single line.
+# Outputs the UPLOAD_URL and UPLOAD_KEY on separate lines.
 #
 create_upload_url() {
   log_info "Requesting secure upload URL..."
@@ -56,19 +54,23 @@ create_upload_url() {
     "${BASE_URL}api.php?action=create_upload_url")
 
   # Use jq's -e flag to exit with an error if '.success' is not true
-  echo "$api_response" | jq -e '.success == true' >/dev/null || log_error "Failed to get upload URL. API Response: $api_response"
+  # FIX: Use log_fatal
+  echo "$api_response" | jq -e '.success == true' >/dev/null || log_fatal "Failed to get upload URL. API Response: $api_response"
 
   local upload_url upload_key
   upload_url=$(echo "$api_response" | jq -r '.uploadURL')
   upload_key=$(echo "$api_response" | jq -r '.key')
 
   if [[ -z "$upload_url" || "$upload_url" == "null" || -z "$upload_key" || "$upload_key" == "null" ]]; then
-    log_error "API response missing 'uploadURL' or 'key'."
+    # FIX: Use log_fatal
+    log_fatal "API response missing 'uploadURL' or 'key'."
   fi
 
   log_info "Received upload credentials."
-  # "Return" both values by echoing them on one line, space-separated
-  echo "$upload_url $upload_key"
+  # FIX: "Return" both values by echoing them on separate lines
+  # This is safer than space-separated values.
+  echo "$upload_url"
+  echo "$upload_key"
 }
 
 ##
@@ -87,10 +89,11 @@ upload_file() {
   log_info "Detected MIME type: $mime_type"
 
   # The pre-signed URL for the PUT request does not require the API key header.
+  # FIX: Use log_fatal
   curl --silent --show-error --fail \
        --request PUT "$upload_url" \
        --header "Content-Type: $mime_type" \
-       --data-binary @"$file_path" || log_error "File data upload failed (curl exited with an error)."
+       --data-binary @"$file_path" || log_fatal "File data upload failed (curl exited with an error)."
   
   log_info "File data uploaded successfully."
 }
@@ -121,13 +124,15 @@ finalize_upload() {
                         --header "X-API-Key: ${STORAGE_PROVIDER_API_KEY}" \
                         --data "$json_payload")
 
-  echo "$final_response" | jq -e '.success == true' >/dev/null || log_error "Failed to finalize upload. API Response: $final_response"
+  # FIX: Use log_fatal
+  echo "$final_response" | jq -e '.success == true' >/dev/null || log_fatal "Failed to finalize upload. API Response: $final_response"
 
   local download_link
   download_link=$(echo "$final_response" | jq -r '.download_link')
   
   if [[ -z "$download_link" || "$download_link" == "null" ]]; then
-    log_error "API response missing 'download_link' after finalization."
+    # FIX: Use log_fatal
+    log_fatal "API response missing 'download_link' after finalization."
   fi
   
   log_info "Upload finalized successfully."
@@ -141,21 +146,27 @@ main() {
   check_dependencies
 
   if [[ -z "$STORAGE_PROVIDER_API_KEY" ]]; then
-    log_error "Environment variable 'STORAGE_PROVIDER_API_KEY' is not set."
+    # FIX: Use log_fatal
+    log_fatal "Environment variable 'STORAGE_PROVIDER_API_KEY' is not set."
   fi
 
   if [[ -z "$1" ]]; then
-    log_error "No file path provided. Usage: $0 /path/to/your/file"
+    # FIX: Use log_fatal
+    log_fatal "No file path provided. Usage: $0 /path/to/your/file"
   fi
   local file_path="$1"
-  [[ -f "$file_path" ]] || log_error "File not found at '$file_path'"
+  # FIX: Use log_fatal
+  [[ -f "$file_path" ]] || log_fatal "File not found at '$file_path'"
 
   log_info "🚀 Starting file upload process for: $file_path"
 
   # --- Execute Steps ---
   local upload_url upload_key
-  # Use process substitution and 'read' to capture the two "returned" values
-  read -r upload_url upload_key < <(create_upload_url)
+  # FIX: Use process substitution with two 'read' commands for safety
+  {
+    read -r upload_url
+    read -r upload_key
+  } < <(create_upload_url)
   
   upload_file "$upload_url" "$file_path"
   
