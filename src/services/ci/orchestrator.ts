@@ -7,6 +7,13 @@ import { JobMetadata } from "../../types/queue.ts";
 import { CIProvider } from "../../types/ci.ts";
 
 const CI_PROVIDERS = [
+        // makeCirrusProvider({
+        //     platform: "github",
+        //     owner: "A1X5H04",
+        //     repo: "magiboot-bot",
+        //     ref: "master",
+        //     apiToken: Deno.env.get("CI_CIRRUS_TOKEN")
+        // }),
         makeGitHubProvider({
             owner: "A1X5H04",
             repo: "magiboot-bot",
@@ -29,11 +36,6 @@ export async function handleJob(jobId?: string) {
         }
     }
 
-    if (!availableProvider) {
-        console.error("No available CI providers at this time.");
-        return;
-    }
-
     let job: JobQueueModel | null = null;
 
     if (jobId) {
@@ -41,15 +43,32 @@ export async function handleJob(jobId?: string) {
     } else {
         job = await queueRepository.findOldestByStatus(db, "pending");
     }
-
+    
     if (!job) {
         console.warn(jobId ? `Job with id ${jobId} not found.` : "No pending job found.", "Failed to dispatch job");
         return;
     }
-
-    await queueRepository.updateStatus(db, job.id, "processing");
-
+    
     const jobMetadata = job.metadata as unknown as JobMetadata
+    
+
+    if (!availableProvider) {
+        console.error("No available CI providers at this time.");
+        await sendStatusUpdate({
+            status: "failed",
+            message: "No available CI providers at this time.",
+            job_id: job.id,
+            tg_metadata: {
+                chatId: jobMetadata.message.chatId,
+                messageId: jobMetadata.message.messageId,
+            }
+        });
+
+        return;
+    }
+
+    
+    await queueRepository.updateStatus(db, job.id, "processing");
 
     const dispatchResult = await availableProvider.triggerWorkflow({
         video: jobMetadata.file_id,
