@@ -1,5 +1,5 @@
 // ci/github.ts
-import type { CIProvider } from "~/types/ci.ts";
+import type { CIProvider } from "../../../types/ci.ts";
 
 interface GithubProviderConfig {
   owner: string;
