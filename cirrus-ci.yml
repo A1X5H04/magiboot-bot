@@ -7,11 +7,6 @@
 #
 # ==============================================================================
 
-# --- Define Build Parameters (replaces GHA workflow_dispatch inputs) ---
-build_parameters:
-  VIDEO: ""
-  OTHER_METADATA: "{}" # Default to empty JSON
-
 # --- Define Encrypted Secrets (replaces GHA secrets) ---
 env:
   TELEGRAM_BOT_TOKEN: ENCRYPTED[!104daba37b8429704fc56c42478d213c88450444296e4a9c9dc14d5a79aa04424a9cf193243f3cdeb920fbc399915f2e!]
@@ -39,8 +34,8 @@ build_and_deploy_task:
   # Environment variables for this task
   environment:
     # Map build parameters to GHA-style input env vars
-    INPUT_VIDEO: $VIDEO
-    INPUT_OTHER_METADATA: $OTHER_METADATA
+    INPUT_VIDEO: ${CIRRUS_ENV_VIDEO:-""}
+    INPUT_OTHER_METADATA: ${CIRRUS_ENV_OTHER_METADATA:-"{}"}
     
     # GHA env vars
     CURRENT_STAGE: "Workflow Setup"
