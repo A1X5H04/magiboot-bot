@@ -1,8 +1,8 @@
 import type { Config } from "https://esm.sh/@netlify/edge-functions";
 
-import { createTursoClient } from "../../../src/lib/turso.ts";
-import { getFilenameFromName } from "../../../src/lib/utils.ts";
-import * as postRepo from "../../../src/repositories/post.ts";
+import { createTursoClient } from "../../src/lib/turso.ts";
+import { getFilenameFromName } from "../../src/lib/utils.ts";
+import * as postRepo from "../../src/repositories/post.ts";
 
 interface CloudFile {
     id: number;

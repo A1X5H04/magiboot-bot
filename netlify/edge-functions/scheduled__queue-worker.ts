@@ -1,6 +1,6 @@
 // netlify/edge-functions/scheduled/queue-worker.ts
 import type { Config } from "https://esm.sh/@netlify/edge-functions";
-import { handleJob } from "../../../src/services/ci/orchestrator.ts";
+import { handleJob } from "../../src/services/ci/orchestrator.ts";
 
 export default async function handler(req: Request) {
     const secret = Deno.env.get("CRON_SECRET");
