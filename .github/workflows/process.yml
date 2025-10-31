@@ -257,17 +257,14 @@ jobs:
           while IFS='=' read -r key value; do
             if [ -n "$key" ] && [ -n "$value" ]; then
               echo "$key=$value" >> "$GITHUB_OUTPUT"
-              if [ "$key" == "boot_output_dir" ]; then
-                echo "boot_output_dir_path=$value" >> "$GITHUB_OUTPUT"
-              fi
             fi
           done <<< "$OUTPUT_STRING"
           
-          # Validate required outputs
-          if [ -z "$boot_output_dir_path" ]; then
-            log_fatal "Processing script did not output boot_output_dir_path"
-            exit 1
-          fi
+          # # Validate required outputs
+          # if [ -z "$boot_output_dir" ]; then
+          #   log_fatal "Processing script did not output boot_output_dir"
+          #   exit 1
+          # fi
 
       # ========================================================================
       # MODULE PACKAGING
@@ -280,7 +277,7 @@ jobs:
           source scripts/logger.sh
           echo "CURRENT_STAGE=Module Packaging" >> $GITHUB_ENV
           
-          BOOT_DIR="${{ steps.run_processing.outputs.boot_output_dir_path }}"
+          BOOT_DIR="${{ steps.run_processing.outputs.boot_output_dir }}"
           
           if [ ! -d "$BOOT_DIR" ]; then
             log_fatal "Boot output directory does not exist: $BOOT_DIR"
