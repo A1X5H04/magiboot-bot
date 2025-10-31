@@ -5,7 +5,7 @@ import { handleJob } from "../services/ci/orchestrator.ts";
 import { ALLOWED_CATEGORIES, TG_GROUP_ID } from "../lib/constants.ts";
 import { getUserInfo } from "../lib/helpers.ts";
 import { parseBootAnimConfig, parseCommandArgs, runValidations } from "../lib/utils.ts";
-import { createDuplicatePostErrorMessage, createStatusMessage, createValidationErrorMessage } from "../lib/messages.ts";
+import { createDuplicatePostErrorMessage, createValidationErrorMessage } from "../lib/messages.ts";
 import { checkBootAnimParts, checkDocumentMimeType, checkDuration, checkFileSize, checkIsPortrait, checkVideoMimeType } from "../lib/validators.ts";
 import { AppContext } from "../types/bot.ts";
 import { ValidationRule } from "../types/utils.ts";
@@ -128,7 +128,9 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
     return
   }
 
-  const statusMessage = createStatusMessage({ status: "pending", message: "Your request is queued for processing", progress: undefined })
+  const statusMessage = FormattedString.b("⏳ Pending: ")
+    .plain("Your boot animation is in the queue and will be picked up soon.")
+    .plain("\nIt’ll start processing as soon as a worker is available.")
 
   if (!ctx.chat?.id || !ctx.from?.id) {
     throw new Error("Cannot find chatID or UserId");
@@ -178,4 +180,5 @@ export async function handleGroupCreateCommand(ctx: AppContext) {
 
   // Also send job to CI so it picks without needing to wait for the scheduler.
   await handleJob(job.id);
+
 }
