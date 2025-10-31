@@ -1,8 +1,5 @@
 import { FormattedString } from "https://esm.sh/@grammyjs/parse-mode@2.2.0";
-import { decodeBase64 } from "https://deno.land/std/encoding/base64.ts";
 
-import { JobStatus } from "../types/queue.ts";
-import { createProgressBar } from "./generators.ts";
 import { PostMetadata } from "../types/schema.ts";
 import { TGUserInfo } from "../types/bot.ts";
 import { LeaderboardEntry } from "../services/leaderboard.ts";
@@ -14,54 +11,9 @@ type KnownError = Error & {
     status?: number;
 };
 
-type StatusMessage = {
-    status: JobStatus;
-    message: string;
-    progress: number | undefined;
-    error_list?: string[];
-}
-
 export interface EnrichedRankedPost extends RankedPost {
     rank: number;
     creator: TGUserInfo;
-}
-
-const statusMap = {
-    "completed": {
-        icon: "✅",
-        title: "Completed!"
-    },
-    "failed": {
-        icon: "❌",
-        title: "Failed."
-    },
-    "pending": {
-        icon: "⏳",
-        title: "Pending"
-    },
-    "processing": {
-        icon: "⚙️",
-        title: "Processing..."
-    }
-}
-
-export function createStatusMessage({ status, message, progress, error_list }: StatusMessage) {
-    const statusMessage = FormattedString.b(`${statusMap[status].title} ${statusMap[status].icon}`).plain(`\n${message}`)
-
-    if (status === "failed" && error_list) {
-        try {
-            statusMessage.plain("\n\n").b("Error Details: ").plain("\n").plain(error_list.join("\n-"));
-        } catch (e) {
-            statusMessage.plain("\n\n").b("Error Details:").plain("\n").plain("Failed to decode error log.");
-        }
-    }
-
-    if (status === "completed" || status === "failed" || status === "pending") {
-        return statusMessage;
-    }
-
-    return new FormattedString("").concat(statusMessage).plain("\n\n").plain(createProgressBar(progress ?? 0))
-
 }
 
 export function createBootanimationPost({ title, creator, details, tags }: Omit<PostMetadata, "download_url" | "video">) {
