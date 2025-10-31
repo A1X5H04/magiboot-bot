@@ -260,11 +260,10 @@ jobs:
             fi
           done <<< "$OUTPUT_STRING"
           
-          # # Validate required outputs
-          # if [ -z "$boot_output_dir" ]; then
-          #   log_fatal "Processing script did not output boot_output_dir"
-          #   exit 1
-          # fi
+          if ! echo "$OUTPUT_STRING" | grep -q "^boot_output_dir="; then
+            log_fatal "Processing script did not output boot_output_dir"
+            exit 1
+          fi
 
       # ========================================================================
       # MODULE PACKAGING
