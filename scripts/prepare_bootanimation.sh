@@ -15,14 +15,11 @@ MAX_WIDTH=3840
 MAX_FPS=60
 MAX_SIZE_MB=20
 
-# --- Strict Mode & Error Handling ---
+# --- Strict Mode & Logger ---
 set -euo pipefail
-
-# --- Logger ---
 source scripts/logger.sh
 
 # --- Core Logic Functions ---
-
 check_dependencies() {
   log_info "Checking dependencies: ffmpeg, ffprobe, awk, jq, seq, xargs..."
   command -v ffmpeg >/dev/null 2>&1 || log_fatal "ffmpeg is not installed. Please install it."
@@ -65,10 +62,14 @@ validate_and_get_properties() {
       .format.format_name // "N/A"
   ')
 
+  
+
   # --- Robustness Checks ---
+
   if [ -z "$width" ] || [[ "$width" == "N/A" ]] || [ -z "$height" ] || [[ "$height" == "N/A" ]]; then
     log_fatal "Validation failed: Could not retrieve video resolution (width/height). Is this a valid video file?"
   fi
+
   if [ -z "$fps_fraction" ] || [[ "$fps_fraction" == "0/0" ]] || [[ "$fps_fraction" == "N/A" ]]; then
     log_fatal "Validation failed: Could not retrieve video frame rate (r_frame_rate)."
   fi
@@ -83,21 +84,21 @@ validate_and_get_properties() {
   local size_mb 
   size_mb=$(awk -v size="$size_bytes" 'BEGIN { printf "%.0f", size / 1024 / 1024 }')
   if [ "$size_mb" -gt "$MAX_SIZE_MB" ]; then
-    log_fatal "Validation failed: Video size ($size_mb MB) exceeds the maximum of $MAX_SIZE_MB MB."
+    log_warn "Validation failed: Video size ($size_mb MB) exceeds the maximum of $MAX_SIZE_MB MB."
   fi
 
   if (( $(awk -v dur="$duration" 'BEGIN { print (dur > '$MAX_DURATION') }') )); then
-    log_fatal "Validation failed: Video duration ($duration s) exceeds the maximum of $MAX_DURATION s."
+    log_warn "Validation failed: Video duration ($duration s) exceeds the maximum of $MAX_DURATION s."
   fi
 
   if [ "$width" -gt "$MAX_WIDTH" ]; then
-    log_fatal "Validation failed: Video width ($width px) exceeds the maximum of $MAX_WIDTH px (4K)."
+    log_warn "Validation failed: Video width ($width px) exceeds the maximum of $MAX_WIDTH px (4K)."
   fi
 
   local fps_value
   fps_value=$(awk -F/ '{print $1 / $2}' <<< "$fps_fraction")
   if (( $(awk -v fps="$fps_value" 'BEGIN { print (fps > '$MAX_FPS') }') )); then
-    log_fatal "Validation failed: Video framerate ($fps_value FPS) exceeds the maximum of $MAX_FPS FPS."
+    log_warn "Validation failed: Video framerate ($fps_value FPS) exceeds the maximum of $MAX_FPS FPS."
   fi
 
   local video_fps desc_fps target_width target_height resolution
