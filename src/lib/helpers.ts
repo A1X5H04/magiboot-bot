@@ -3,13 +3,13 @@ import { StatusUpdate } from "../types/schema.ts";
 import { TGUserInfo } from "../types/bot.ts";
 
 export async function sendStatusUpdate(data: StatusUpdate) {
-    const url = "https://unmilked-holily-contessa.ngrok-free.app/bot/status"
+    const baseURL = Deno.env.get("BOT_BASE_URL");
 
-    const res = await fetch(url, {
+    const res = await fetch(`${baseURL}/bot/status`, {
         method: "POST",
         body: JSON.stringify({
             status: data.status,
-            message: data.message,
+            message: data.status === "failed" ? data.message : undefined,
             tg_metadata: data.tg_metadata,
         })
     })
