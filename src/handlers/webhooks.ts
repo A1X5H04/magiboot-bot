@@ -46,6 +46,7 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
                 .plain("\nPlease try again later or upload a new video.")
                 .italic("\n\nDetails:\n")
                 .plain(validatedData.error_list?.join("\n• ") || "")
+                .plain("\n\nPlease report to @a1x5h04 if it feels unfamiliar.")
             break;
         case "completed": {
             const postCaption = createBootanimationPost(validatedData.post_metadata)
@@ -72,9 +73,9 @@ export default async function handleStatus(bot: Bot<AppContext, Api<RawApi>>, re
 
             statusMessage = FormattedString.b("✅ Completed: ")
             .plain("Your boot animation has been successfully processed.")
-            .plain("\nIt’s now posted on the channel — check it out here:")
+            .plain("\nIt’s now posted on the channel — check it out here:\n")
             .plain("👉 ")
-            .link(validatedData.post_metadata.title, `https://t.me/${TG_CHANNEL_ID}/${res.message_id}`)
+            .link(validatedData.post_metadata.title, `https://t.me/magibootcommunity/${res.message_id}`)
             break;
         }
 
