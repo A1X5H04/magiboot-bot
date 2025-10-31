@@ -1,9 +1,6 @@
 # ==============================================================================
 #
-#  Modular Video Processing Workflow (Streamlined)
-#
-#  This workflow processes a video into a bootanimation in a single,
-#  high-speed job to minimize GitHub Actions overhead.
+#  Modular Video Processing Workflow (Robust & Error-Proof)
 #
 # ==============================================================================
 
@@ -23,82 +20,163 @@ env:
   BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   STORAGE_PROVIDER_API_KEY: ${{ secrets.STORAGE_PROVIDER_API_KEY }}
   TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-
   INTERNAL_DEBUG_LOG: ${{ github.workspace }}/build_log.jsonl
   USER_ERROR_LOG: ${{ github.workspace }}/user_errors.log
-  RUN_DEBUG_LOG: "false" # "true" for verbose logging
+  RUN_DEBUG_LOG: "false"
 
 jobs:
-  # =====================================================================================
-  # JOB 1: BUILD & DEPLOY (MERGED)
-  # - This single job handles setup, processing, packaging, and deployment.
-  # =====================================================================================
   build_and_deploy:
     name: "Build & Deploy Module"
     runs-on: ubuntu-latest
-    # outputs:
-    #   msg_metadata: ${{ steps.publish_outputs.outputs.msg_metadata }}
-    #   job_id: ${{ steps.publish_outputs.outputs.job_id }}
-    #   stage_b64: ${{ steps.publish_outputs.outputs.stage_b64 }}
-    #   error_json_array_b64: ${{ steps.publish_outputs.outputs.error_json_array_b64 }}
-    #   error_plain_text_b64: ${{ steps.publish_outputs.outputs.error_plain_text_b64 }}
     env:
       CURRENT_STAGE: "Workflow Setup"
       JOB_ID: ${{ fromJson(inputs.other_metadata).jobId }}
       METADATA_JSON: ${{ inputs.other_metadata }}
+      NOTIFICATION_FAILED: "false"
+    
     steps:
-      # === SETUP STEPS ===
+      # ========================================================================
+      # SETUP STEPS
+      # ========================================================================
+      
       - name: "Checkout repository"
-        uses: actions/checkout@v4
-
-      - name: "Install dependencies (jq, curl)"
+        id: checkout
         run: |
+          echo "CURRENT_STAGE=Repository Checkout" >> $GITHUB_ENV
+        continue-on-error: false
+      
+      - uses: actions/checkout@v4
+        if: steps.checkout.outcome == 'success'
+
+      - name: "Install dependencies"
+        id: install_deps
+        run: |
+          echo "CURRENT_STAGE=Dependency Installation" >> $GITHUB_ENV
           source scripts/logger.sh
           log_info "Installing dependencies (jq, curl)..."
           sudo apt-get update -y >/dev/null 2>&1
           sudo apt-get install -y jq curl >/dev/null 2>&1
-          log_info "Dependencies installed"
+          log_info "Dependencies installed successfully"
 
       - name: "Make scripts executable"
-        run: chmod +x scripts/notify.sh scripts/logger.sh scripts/prepare_bootanimation.sh scripts/package_module.sh scripts/upload_file.sh
-
-      - name: "Set Notification Metadata Env"
-        env: 
-          METADATA_JSON_INPUT: ${{ inputs.other_metadata }}
         run: |
+          chmod +x scripts/notify.sh scripts/logger.sh scripts/prepare_bootanimation.sh scripts/package_module.sh scripts/upload_file.sh
+
+      - name: "Validate and Set Notification Metadata"
+        id: set_metadata
+        run: |
+          echo "CURRENT_STAGE=Metadata Validation" >> $GITHUB_ENV
           source scripts/logger.sh
-          log_info "Setting MSG_METADATA_JSON environment variable..."
-          MSG_META=$(echo "$METADATA_JSON_INPUT" | jq -e -c '.msg_metadata')
           
-          if [ $? -ne 0 ] || [ "$MSG_META" == "null" ]; then
-            log_fatal "Failed to extract .msg_metadata from inputs.other_metadata or it was null."
-            echo "Input was: $METADATA_JSON_INPUT"
+          log_info "Validating input metadata..."
+          
+          # Validate that other_metadata is valid JSON
+          if ! echo "$METADATA_JSON" | jq empty 2>/dev/null; then
+            log_fatal "Invalid JSON in inputs.other_metadata"
             exit 1
           fi
           
+          # Extract msg_metadata with proper error handling
+          MSG_META=$(echo "$METADATA_JSON" | jq -c '.msg_metadata // empty')
+          
+          if [ -z "$MSG_META" ] || [ "$MSG_META" == "null" ]; then
+            log_fatal "Missing .msg_metadata in inputs.other_metadata"
+            echo "Input was: $METADATA_JSON"
+            exit 1
+          fi
+          
+          # Validate required fields in msg_metadata
+          CHAT_ID=$(echo "$MSG_META" | jq -r '.chatId // .chat_id // empty')
+          MESSAGE_ID=$(echo "$MSG_META" | jq -r '.messageId // .message_id // empty')
+          
+          if [ -z "$CHAT_ID" ] || [ "$CHAT_ID" == "null" ]; then
+            log_fatal "Missing chatId in msg_metadata"
+            exit 1
+          fi
+          
+          if [ -z "$MESSAGE_ID" ] || [ "$MESSAGE_ID" == "null" ]; then
+            log_fatal "Missing messageId in msg_metadata"
+            exit 1
+          fi
+          
+          log_info "Metadata validated: ChatID=$CHAT_ID, MessageID=$MESSAGE_ID"
+          
+          # Set environment variable for notify.sh
           echo "MSG_METADATA_JSON=$MSG_META" >> $GITHUB_ENV
+          
+          log_info "MSG_METADATA_JSON set successfully"
 
+      # ========================================================================
+      # NOTIFICATION: Processing Started
+      # ========================================================================
+      
       - name: "Send 'Processing' status"
+        id: notify_processing
+        if: success()
+        continue-on-error: true
         run: |
-          scripts/notify.sh --status "processing"
+          echo "CURRENT_STAGE=Notification - Processing" >> $GITHUB_ENV
+          scripts/notify.sh --status "processing" || {
+            echo "NOTIFICATION_FAILED=true" >> $GITHUB_ENV
+            echo "::warning::Processing notification failed, but continuing workflow"
+            exit 0
+          }
 
+      # ========================================================================
+      # VIDEO DOWNLOAD
+      # ========================================================================
+      
       - name: "Download video file"
         id: download
+        if: success()
         run: |
           source scripts/logger.sh
           echo "CURRENT_STAGE=Video Download" >> $GITHUB_ENV
           set -e
+          
           FILE_ID="${{ inputs.video }}"
-          BOT_TOKEN="${{ env.BOT_TOKEN }}"
-          log_info "Downloading video file (FileID: $FILE_ID)..."
-          API_RESPONSE=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${FILE_ID}")
-          if [[ "$(echo "$API_RESPONSE" | jq -r '.ok')" != "true" ]]; then
-            log_fatal "Telegram API Error: $(echo "$API_RESPONSE" | jq -r '.description')"
+          
+          if [ -z "$FILE_ID" ]; then
+            log_fatal "Video file ID is empty"
+            exit 1
           fi
+          
+          log_info "Downloading video file (FileID: $FILE_ID)..."
+          
+          API_RESPONSE=$(curl -s -f --max-time 30 \
+            "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${FILE_ID}" || echo '{"ok":false}')
+          
+          if [[ "$(echo "$API_RESPONSE" | jq -r '.ok')" != "true" ]]; then
+            ERROR_DESC=$(echo "$API_RESPONSE" | jq -r '.description // "Unknown API error"')
+            log_fatal "Telegram API Error: $ERROR_DESC"
+            exit 1
+          fi
+          
           FILE_PATH=$(echo "$API_RESPONSE" | jq -r '.result.file_path')
-          curl -s -L -o "video.mp4" "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}"
-          log_info "Video downloaded successfully to video.mp4"
+          
+          if [ -z "$FILE_PATH" ] || [ "$FILE_PATH" == "null" ]; then
+            log_fatal "Failed to get file path from Telegram API"
+            exit 1
+          fi
+          
+          if ! curl -s -f -L --max-time 60 \
+            -o "video.mp4" \
+            "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}"; then
+            log_fatal "Failed to download video file"
+            exit 1
+          fi
+          
+          if [ ! -f "video.mp4" ] || [ ! -s "video.mp4" ]; then
+            log_fatal "Downloaded video file is missing or empty"
+            exit 1
+          fi
+          
+          log_info "Video downloaded successfully ($(du -h video.mp4 | cut -f1))"
 
+      # ========================================================================
+      # FFMPEG SETUP
+      # ========================================================================
+      
       - name: "Cache FFmpeg Docker image"
         id: cache-ffmpeg
         uses: actions/cache@v4
@@ -107,145 +185,234 @@ jobs:
           key: ${{ runner.os }}-ffmpeg-4.4-ubuntu
 
       - name: "Load or Pull FFmpeg image"
+        id: setup_ffmpeg
+        if: success()
         run: |
           source scripts/logger.sh
+          echo "CURRENT_STAGE=FFmpeg Setup" >> $GITHUB_ENV
+          
           mkdir -p docker-image-cache
+          
           if [ -f docker-image-cache/ffmpeg.tar ]; then
             log_info "Loading FFmpeg from cache..."
-            docker load -i docker-image-cache/ffmpeg.tar
-            log_info "FFmpeg loaded."
+            if docker load -i docker-image-cache/ffmpeg.tar; then
+              log_info "FFmpeg loaded from cache successfully"
+            else
+              log_info "Cache corrupted, pulling fresh image..."
+              rm -f docker-image-cache/ffmpeg.tar
+              docker pull jrottenberg/ffmpeg:4.4-ubuntu
+              docker save jrottenberg/ffmpeg:4.4-ubuntu -o docker-image-cache/ffmpeg.tar
+            fi
           else
-            echo "Pulling FFmpeg from registry..."
             log_info "Pulling FFmpeg from registry..."
             docker pull jrottenberg/ffmpeg:4.4-ubuntu
             docker save jrottenberg/ffmpeg:4.4-ubuntu -o docker-image-cache/ffmpeg.tar
-            log_info "FFmpeg saved to cache."
+            log_info "FFmpeg saved to cache"
           fi
 
-      - name: "Run Processing Script"
+      # ========================================================================
+      # VIDEO PROCESSING
+      # ========================================================================
+      
+      - name: "Process Video"
         id: run_processing
-        # FIX: Pass the parsed JSON string via env var to avoid quote injection
-        env:
-          METADATA_JSON_ENV: ${{ steps.parse_metadata.outputs.json_string }}
+        if: success()
         run: |
           source scripts/logger.sh
-          chmod +x scripts/prepare_bootanimation.sh scripts/notify.sh scripts/logger.sh
+          echo "CURRENT_STAGE=Video Processing" >> $GITHUB_ENV
+          
           log_info "Starting containerized video processing..."
           
           CONTAINER_USER_ERROR_LOG="/workdir/user_errors.log"
           CONTAINER_INTERNAL_DEBUG_LOG="/workdir/build_log.jsonl"
-
+          
           CONTAINER_COMMAND="chmod +x scripts/logger.sh scripts/prepare_bootanimation.sh && apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
           
-          # Execute, capturing stdout to variable and stderr to file
-          OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir \
+          # Execute processing with error handling
+          set +e
+          OUTPUT_STRING=$(docker run --rm \
+            -v "$(pwd):/workdir" \
+            -w /workdir \
             -e METADATA_JSON \
             -e "INTERNAL_DEBUG_LOG=${CONTAINER_INTERNAL_DEBUG_LOG}" \
             -e "USER_ERROR_LOG=${CONTAINER_USER_ERROR_LOG}" \
             -e RUN_DEBUG_LOGS \
             -e CURRENT_STAGE \
-            --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
-            -c "$CONTAINER_COMMAND")
+            --entrypoint "bash" \
+            jrottenberg/ffmpeg:4.4-ubuntu \
+            -c "$CONTAINER_COMMAND" 2>&1)
           
-          log_info "Video processing script finished."
+          PROCESSING_EXIT_CODE=$?
+          set -e
+          
+          if [ $PROCESSING_EXIT_CODE -ne 0 ]; then
+            log_fatal "Video processing failed with exit code $PROCESSING_EXIT_CODE"
+            echo "$OUTPUT_STRING" >> "$USER_ERROR_LOG"
+            exit 1
+          fi
+          
+          log_info "Video processing completed successfully"
+          
+          # Parse outputs
           while IFS='=' read -r key value; do
             if [ -n "$key" ] && [ -n "$value" ]; then
               echo "$key=$value" >> "$GITHUB_OUTPUT"
               if [ "$key" == "boot_output_dir" ]; then
-                # Ensure the one required for the next step is named correctly
                 echo "boot_output_dir_path=$value" >> "$GITHUB_OUTPUT"
               fi
             fi
           done <<< "$OUTPUT_STRING"
+          
+          # Validate required outputs
+          if [ -z "$boot_output_dir_path" ]; then
+            log_fatal "Processing script did not output boot_output_dir_path"
+            exit 1
+          fi
 
-      - name: "Package the flashable module"
+      # ========================================================================
+      # MODULE PACKAGING
+      # ========================================================================
+      
+      - name: "Package Module"
         id: package_module
+        if: success()
         run: |
           source scripts/logger.sh
           echo "CURRENT_STAGE=Module Packaging" >> $GITHUB_ENV
-
-          chmod +x scripts/package_module.sh
-          log_info "Packaging final module..."
-          MODULE_NAME=$(echo "$METADATA_JSON" | jq -r '.title')
-          MODULE_CREATOR=$(echo "$METADATA_JSON" | jq -r '.creator.name')
-          FINAL_FILENAME=$(scripts/package_module.sh "${{ steps.run_processing.outputs.boot_output_dir_path }}" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
+          
+          BOOT_DIR="${{ steps.run_processing.outputs.boot_output_dir_path }}"
+          
+          if [ ! -d "$BOOT_DIR" ]; then
+            log_fatal "Boot output directory does not exist: $BOOT_DIR"
+            exit 1
+          fi
+          
+          log_info "Packaging module from: $BOOT_DIR"
+          
+          MODULE_NAME=$(echo "$METADATA_JSON" | jq -r '.title // "Bootanimation"')
+          MODULE_CREATOR=$(echo "$METADATA_JSON" | jq -r '.creator.name // "Unknown"')
+          
+          FINAL_FILENAME=$(scripts/package_module.sh \
+            "$BOOT_DIR" \
+            ./scripts/module_template \
+            --module-name "$MODULE_NAME" \
+            --module-creator "$MODULE_CREATOR")
+          
+          if [ -z "$FINAL_FILENAME" ] || [ ! -f "$FINAL_FILENAME" ]; then
+            log_fatal "Module packaging failed - output file not created"
+            exit 1
+          fi
+          
           echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
-          log_info "Module packaged: $FINAL_FILENAME"
+          log_info "Module packaged successfully: $FINAL_FILENAME"
 
-      - name: "Generate and Upload MP4 Preview"
+      # ========================================================================
+      # PREVIEW GENERATION
+      # ========================================================================
+      
+      - name: "Generate and Upload Preview"
         id: upload_preview
+        if: success()
         run: |
           source scripts/logger.sh
-          set -e 
-
+          echo "CURRENT_STAGE=Preview Generation" >> $GITHUB_ENV
+          set -e
+          
           log_info "Generating MP4 preview..."
-          docker run --rm -v "$(pwd):/workdir" -w /workdir \
-          jrottenberg/ffmpeg:4.4-ubuntu \
-          -v error -hwaccel auto -i video.mp4 \
-          -vf "fps=15,scale=320:-2,format=yuv420p" \
-          -an -c:v libx264 -crf 28 -preset ultrafast \
-          -movflags +faststart preview.mp4
-
-          if [ ! -f "preview.mp4" ]; then
-            log_fatal "FFmpeg failed to generate preview.mp4."
-            exit 1 # FIX: Ensure workflow stops on fatal error
+          
+          set +e
+          docker run --rm \
+            -v "$(pwd):/workdir" \
+            -w /workdir \
+            jrottenberg/ffmpeg:4.4-ubuntu \
+            -v error -hwaccel auto -i video.mp4 \
+            -vf "fps=15,scale=320:-2,format=yuv420p" \
+            -an -c:v libx264 -crf 28 -preset ultrafast \
+            -movflags +faststart preview.mp4 2>&1
+          
+          FFMPEG_EXIT=$?
+          set -e
+          
+          if [ $FFMPEG_EXIT -ne 0 ] || [ ! -f "preview.mp4" ] || [ ! -s "preview.mp4" ]; then
+            log_fatal "FFmpeg failed to generate preview.mp4 (exit code: $FFMPEG_EXIT)"
+            exit 1
           fi
-
+          
+          log_info "Preview generated ($(du -h preview.mp4 | cut -f1))"
           log_info "Uploading preview to tmpfiles.org..."
-          API_RESPONSE=$(curl --fail -s -F "file=@preview.mp4" https://tmpfiles.org/api/v1/upload)
-
-          if ! echo "$API_RESPONSE" | jq -e . > /dev/null; then
-              log_fatal "Failed to upload to tmpfiles.org or received non-JSON response. API Response: $API_RESPONSE"
-              exit 1 # FIX: Ensure workflow stops on fatal error
+          
+          set +e
+          API_RESPONSE=$(curl -f -s --max-time 60 \
+            -F "file=@preview.mp4" \
+            https://tmpfiles.org/api/v1/upload 2>&1)
+          UPLOAD_EXIT=$?
+          set -e
+          
+          if [ $UPLOAD_EXIT -ne 0 ]; then
+            log_fatal "Failed to upload preview (curl exit: $UPLOAD_EXIT)"
+            exit 1
           fi
-
-          RAW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url')
-
+          
+          if ! echo "$API_RESPONSE" | jq -e . >/dev/null 2>&1; then
+            log_fatal "tmpfiles.org returned non-JSON response: $API_RESPONSE"
+            exit 1
+          fi
+          
+          RAW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url // empty')
+          
           if [ -z "$RAW_URL" ] || [ "$RAW_URL" == "null" ]; then
-            log_fatal "Failed to upload preview to tmpfiles.org. API Response: $API_RESPONSE"
-            exit 1 # FIX: Ensure workflow stops on fatal error
+            log_fatal "Failed to extract URL from tmpfiles.org response"
+            exit 1
           fi
-
+          
           PREVIEW_URL=$(echo "$RAW_URL" | sed -e 's|http://|https://|' -e 's|tmpfiles.org/|tmpfiles.org/dl/|')
-
+          
           log_info "Preview URL: $PREVIEW_URL"
           echo "preview_url=${PREVIEW_URL}" >> "$GITHUB_OUTPUT"
 
-      - name: "Upload module and get download link"
+      # ========================================================================
+      # MODULE UPLOAD
+      # ========================================================================
+      
+      - name: "Upload Module"
         id: upload
+        if: success()
         run: |
           source scripts/logger.sh
           echo "CURRENT_STAGE=Module Upload" >> $GITHUB_ENV
-
-          chmod +x scripts/upload_file.sh
-          log_info "Uploading final module to storage provider..."
-          DOWNLOAD_LINK=$(scripts/upload_file.sh "${{ steps.package_module.outputs.filename }}")
+          
+          MODULE_FILE="${{ steps.package_module.outputs.filename }}"
+          
+          if [ ! -f "$MODULE_FILE" ]; then
+            log_fatal "Module file not found: $MODULE_FILE"
+            exit 1
+          fi
+          
+          log_info "Uploading module: $MODULE_FILE"
+          
+          DOWNLOAD_LINK=$(scripts/upload_file.sh "$MODULE_FILE")
+          
+          if [ -z "$DOWNLOAD_LINK" ]; then
+            log_fatal "Module upload failed - no download link returned"
+            exit 1
+          fi
+          
           echo "download_link=${DOWNLOAD_LINK}" >> "$GITHUB_OUTPUT"
-          log_info "Module upload complete."
+          log_info "Module uploaded successfully"
+
+      # ========================================================================
+      # PREPARE POST METADATA
+      # ========================================================================
       
-      - name: "Prepare final post metadata"
+      - name: "Prepare Post Metadata"
         id: post_data
-        # FIX: Pass ALL dynamic inputs via environment variables
-        # This prevents the "JToken" error by not nesting expressions
-        # inside the jq command string.
-        # env:  
-        #   TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-        #   INPUT_JOB_ID: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
-        #   INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
-        #   BASE_META: ${{ steps.parse_metadata.outputs.json_string }}
-        #   DOWNLOAD_URL: ${{ steps.upload.outputs.download_link }}
-        #   PREVIEW_URL: ${{ steps.upload_preview.outputs.preview_url }}
-        #   VIDEO_RES: ${{ steps.run_processing.outputs.boot_video_resolution }}
-        #   BOOT_RES: ${{ steps.run_processing.outputs.boot_bootanimation_resolution }}
-        #   BOOT_FPS: ${{ steps.run_processing.outputs.boot_video_fps }}
-        #   BOOT_TYPE: ${{ steps.run_processing.outputs.boot_bootanimation_module_type }}
-        #   DURATION: ${{ steps.run_processing.outputs.boot_video_duration }}
-        #   VIDEO_ID: ${{ inputs.video }}
+        if: success()
         run: |
           source scripts/logger.sh
-          echo "CURRENT_STAGE=Prepare Final Post" >> $GITHUB_ENV
+          echo "CURRENT_STAGE=Post Metadata Preparation" >> $GITHUB_ENV
           
-          # Read all the outputs from previous steps
+          log_info "Generating post metadata..."
+          
           DOWNLOAD_URL="${{ steps.upload.outputs.download_link }}"
           PREVIEW_URL="${{ steps.upload_preview.outputs.preview_url }}"
           VIDEO_RES="${{ steps.run_processing.outputs.boot_video_resolution }}"
@@ -254,51 +421,99 @@ jobs:
           BOOT_TYPE="${{ steps.run_processing.outputs.boot_bootanimation_module_type }}"
           DURATION="${{ steps.run_processing.outputs.boot_video_duration }}"
           VIDEO_ID="${{ inputs.video }}"
-
-          log_info "Generating final post metadata..."
-          # Now, the jq command safely reads from env vars.
+          
+          # Validate required fields
+          if [ -z "$DOWNLOAD_URL" ] || [ -z "$PREVIEW_URL" ]; then
+            log_fatal "Missing required URLs for post metadata"
+            exit 1
+          fi
+          
           POST_METADATA=$(jq -n -c \
             --argjson base_meta "$METADATA_JSON" \
             --arg download_url "$DOWNLOAD_URL" \
             --arg preview_url "$PREVIEW_URL" \
-            --arg video_res "$VIDEO_RES" \
-            --arg boot_res "$BOOT_RES" \
-            --arg boot_fps "$BOOT_FPS" \
-            --arg boot_type "$BOOT_TYPE" \
-            --arg duration "$DURATION" \
+            --arg video_res "${VIDEO_RES:-unknown}" \
+            --arg boot_res "${BOOT_RES:-unknown}" \
+            --arg boot_fps "${BOOT_FPS:-30}" \
+            --arg boot_type "${BOOT_TYPE:-standard}" \
+            --arg duration "${DURATION:-0}" \
             --arg video_file_id "$VIDEO_ID" \
-            '
-              {
-                "title": $base_meta.title,
-                "creator": { "user_id": $base_meta.creator.id, "name": $base_meta.creator.name },
-                "download_url": $download_url,
-                "preview_url": $preview_url,
-                "tags": $base_meta.tags,
-                "video": { "file_id": $video_file_id, "file_unique_id": $base_meta.unique_file_id, "ref_message_id": $base_meta.ref_message_id },
-                "details": {
-                  "resolution": { "module": $boot_res, "video": $video_res },
-                  "fps": ($boot_fps | tonumber),
-                  "duration": ($duration | tonumber | round),
-                  "type": $boot_type
-                }
+            '{
+              "title": $base_meta.title,
+              "creator": {
+                "user_id": $base_meta.creator.id,
+                "name": $base_meta.creator.name
+              },
+              "download_url": $download_url,
+              "preview_url": $preview_url,
+              "tags": ($base_meta.tags // []),
+              "video": {
+                "file_id": $video_file_id,
+                "file_unique_id": ($base_meta.unique_file_id // ""),
+                "ref_message_id": ($base_meta.ref_message_id // 0)
+              },
+              "details": {
+                "resolution": {
+                  "module": $boot_res,
+                  "video": $video_res
+                },
+                "fps": ($boot_fps | tonumber),
+                "duration": ($duration | tonumber | round),
+                "type": $boot_type
               }
-          ')
-
+            }')
+          
+          if [ $? -ne 0 ] || [ -z "$POST_METADATA" ]; then
+            log_fatal "Failed to generate post metadata JSON"
+            exit 1
+          fi
+          
           echo "post_metadata=$POST_METADATA" >> "$GITHUB_OUTPUT"
-          log_info "Post metadata generated."
+          log_info "Post metadata generated successfully"
 
+      # ========================================================================
+      # NOTIFICATION: Success
+      # ========================================================================
+      
       - name: "Send 'Completed' status"
+        id: notify_completed
         if: success()
         env:
           POST_METADATA: ${{ steps.post_data.outputs.post_metadata }}
         run: |
-          echo "CURRENT_STAGE=Completed" >> $GITHUB_ENV
-          scripts/notify.sh --status "completed" \
-                 --data "$POST_METADATA"
+          echo "CURRENT_STAGE=Notification - Completed" >> $GITHUB_ENV
+          
+          if [ -z "$POST_METADATA" ]; then
+            echo "::error::POST_METADATA is empty, cannot send completed notification"
+            exit 1
+          fi
+          
+          scripts/notify.sh --status "completed" --data "$POST_METADATA"
 
-      # This step will ONLY run if ANY preceding step failed
+      # ========================================================================
+      # NOTIFICATION: Failure (runs only if any previous step failed)
+      # ========================================================================
+      
       - name: "Send 'Failed' status"
         if: failure()
         run: |
+          echo "CURRENT_STAGE=Notification - Failed" >> $GITHUB_ENV
+          
+          # Determine which stage failed
+          FAILURE_STAGE="${CURRENT_STAGE:-Unknown Stage}"
+          
           scripts/notify.sh --status "failed" \
-                 --message "Job failed at stage: $CURRENT_STAGE"
+            --message "Job failed at stage: $FAILURE_STAGE"
+
+      # ========================================================================
+      # CLEANUP
+      # ========================================================================
+      
+      - name: "Cleanup"
+        if: always()
+        continue-on-error: true
+        run: |
+          source scripts/logger.sh
+          log_info "Cleaning up temporary files..."
+          rm -f video.mp4 preview.mp4 2>/dev/null || true
+          log_info "Cleanup complete"
