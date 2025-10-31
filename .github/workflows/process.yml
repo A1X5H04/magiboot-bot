@@ -46,7 +46,6 @@ jobs:
       CURRENT_STAGE: "Workflow Setup"
       JOB_ID: ${{ fromJson(inputs.other_metadata).jobId }}
       METADATA_JSON: ${{ inputs.other_metadata }}
-
     steps:
       # === SETUP STEPS ===
       - name: "Checkout repository"
@@ -64,39 +63,20 @@ jobs:
         run: chmod +x scripts/notify.sh scripts/logger.sh scripts/prepare_bootanimation.sh scripts/package_module.sh scripts/upload_file.sh
 
       - name: "Set Notification Metadata Env"
+        env: 
+          METADATA_JSON_INPUT: ${{ inputs.other_metadata }}
         run: |
           source scripts/logger.sh
           log_info "Setting MSG_METADATA_JSON environment variable..."
-          # Use jq to extract the .msg_metadata object and output as compact JSON
-          # This is the same as 'fromJson(...).msg_metadata | toJson'
-          echo "MSG_METADATA_JSON=$(echo "$METADATA_JSON" | jq -c '.msg_metadata')" >> $GITHUB_ENV
-
-      # - name: "Parse and validate metadata"
-      #   id: parse_metadata
-      #   # FIX: Pass complex JSON input via an environment variable
-      #   # This prevents shell errors if the JSON contains single quotes.
-      #   env:
-      #     METADATA_JSON: ${{ inputs.other_metadata }}
-      #   run: |
-      #     source scripts/logger.sh
-      #     log_info "Parsing workflow metadata..."
+          MSG_META=$(echo "$METADATA_JSON_INPUT" | jq -e -c '.msg_metadata')
           
-      #     if [ -z "$METADATA_JSON" ]; then
-      #       log_fatal "Metadata JSON is empty. Workflow cannot proceed."
-      #       exit 1
-      #     fi
-
-      #     PARSED_META=$(echo "$METADATA_JSON" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id, "bootanim_config": .bootanim_config, "tags": .tags }')
-      #     MSG_METADATA=$(echo "$METADATA_JSON" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
-
-      #     if [ -z "$PARSED_META" ] || [ -z "$MSG_METADATA" ] || [ "$PARSED_META" == "null" ] || [ "$MSG_METADATA" == "null" ]; then
-      #       log_fatal "Failed to parse metadata JSON. Check input format."
-      #       exit 1
-      #     fi
-
-      #     echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
-      #     echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
-      #     log_info "Metadata parsed."
+          if [ $? -ne 0 ] || [ "$MSG_META" == "null" ]; then
+            log_fatal "Failed to extract .msg_metadata from inputs.other_metadata or it was null."
+            echo "Input was: $METADATA_JSON_INPUT"
+            exit 1
+          fi
+          
+          echo "MSG_METADATA_JSON=$MSG_META" >> $GITHUB_ENV
 
       - name: "Send 'Processing' status"
         run: |
@@ -309,10 +289,12 @@ jobs:
 
       - name: "Send 'Completed' status"
         if: success()
+        env:
+          POST_METADATA: ${{ steps.post_data.outputs.post_metadata }}
         run: |
           echo "CURRENT_STAGE=Completed" >> $GITHUB_ENV
           scripts/notify.sh --status "completed" \
-                 --data "${{ steps.post_data.outputs.post_metadata }}"
+                 --data "$POST_METADATA"
 
       # This step will ONLY run if ANY preceding step failed
       - name: "Send 'Failed' status"

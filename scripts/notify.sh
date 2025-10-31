@@ -61,8 +61,6 @@ echo "Attempting to send notification (status: $STATUS) to webhook..." >&2
 # 2. Add 'post_metadata' as a nested object only if status is 'completed'.
 FILTER_FILE=$(mktemp)
 cat << 'EOF_JQ_FILTER' > "$FILTER_FILE"
-# 1. Start with the base object, including the nested tg_metadata
-#    and renaming the keys inside it.
 {
   status: $status,
   job_id: $jobId,
@@ -71,17 +69,15 @@ cat << 'EOF_JQ_FILTER' > "$FILTER_FILE"
     messageId: $tgMetadata.message_id
   }
 }
-# 2. Pipe to the 'failed' status modifier
 | if $status == "failed" then
     . + {message: $message, error_list: $errors}
   else
     . # Pass through unchanged
   end
-# 3. Pipe to the 'completed' status modifier
 | if $status == "completed" and $ARGS.named.data != null and $ARGS.named.data != "" then
     . + {post_metadata: ($ARGS.named.data | fromjson)} # Merge data nested under "post_metadata"
   else
-    . # Pass through unchanged
+    .
   end
 EOF_JQ_FILTER
 
@@ -137,10 +133,8 @@ if [ "$STATUS" == "failed" ]; then
     MESSAGE_ID=$(echo "$MSG_METADATA_JSON" | jq -r '.message_id')
     
     # We now use the $MESSAGE variable as the base
+    ESCAPED_CURL_ERROR=$(echo "$curl_error" | sed 's/`/\\`/g')
     FALLBACK_TEXT=$(echo -e "❌ *Status*: Failed.\n${MESSAGE}\n\n*Errors:*\n${ERROR_PLAIN_TEXT}\n\n---\n*Notification service failed (Code: $curl_exit_code).*\\n\`${ESCAPED_CURL_ERROR}\`\\n\\nReport to @a1x5h04.")
-
-    # --- Second Fallback: Send New Message (as a reply to the failed edit) ---
-    # This executes if editMessageText failed (exit code 22).
 
     FALLBACK_SEND_PAYLOAD=$(jq -n -c \
       --arg cid "$CHAT_ID" \
