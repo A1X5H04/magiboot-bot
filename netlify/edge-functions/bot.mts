@@ -7,8 +7,6 @@ export default async function handler(req: Request) {
   const url = new URL(req.url);
   try {
 
-    console.log("✅ Edge function invoked for path:", url.pathname);
-
     const bot = initBot();
     if (url.pathname === "/bot/reset-webhook") {
       try {
