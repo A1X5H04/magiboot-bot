@@ -55,18 +55,21 @@ fi
 
 # --- Attempt 1: Primary Webhook ---
 echo "Attempting to send notification (status: $STATUS) to webhook..." >&2
+
+JQ_FILTER='
+  {status: $status, job_id: $jobId, tg_metadata: $tgMetadata}
+  + (if $status == "failed" then {message: $message, error_list: $errors} else {})
+  + (if $status == "completed" and $ARGS.named.data != null then {post_metadata: $ARGS.named.data | fromjson} else {})
+'
+
 PRIMARY_PAYLOAD=$(jq -n \
   --arg status "$STATUS" \
   --arg jobId "$JOB_ID" \
   --argjson tgMetadata "$MSG_METADATA_JSON" \
   --arg message "$MESSAGE" \
   --argjson errors "$ERROR_LIST_JSON" \
-  '
-    {status: $status, job_id: $jobId, tg_metadata: $tgMetadata}
-    + (if $status == "failed" then {message: $message, error_list: $errors} else {})
-    + (if $status == "completed" and $ARGS.named.data != null then {post_metadata: $ARGS.named.data | fromjson} else {})
-  ' \
-  --arg data "$DATA_JSON"
+  "$JQ_FILTER"
+  --arg data "$DATA_JSON" \
 )
 
 # Capture stderr and stdout from curl, and its exit code

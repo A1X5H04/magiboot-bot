@@ -312,7 +312,7 @@ jobs:
         run: |
           echo "CURRENT_STAGE=Completed" >> $GITHUB_ENV
           scripts/notify.sh --status "completed" \
-                 --data '${{ steps.post_data.outputs.post_metadata }}'
+                 --data "${{ steps.post_data.outputs.post_metadata }}"
 
       # This step will ONLY run if ANY preceding step failed
       - name: "Send 'Failed' status"
