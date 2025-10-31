@@ -56,11 +56,34 @@ fi
 # --- Attempt 1: Primary Webhook ---
 echo "Attempting to send notification (status: $STATUS) to webhook..." >&2
 
-JQ_FILTER='
-  {status: $status, job_id: $jobId, tg_metadata: $tgMetadata}
-  + (if $status == "failed" then {message: $message, error_list: $errors} else {})
-  + (if $status == "completed" and $ARGS.named.data != null then {post_metadata: $ARGS.named.data | fromjson} else {})
-'
+# FIX: Build the correct NESTED JSON structure based on the schema.
+# 1. Create the nested 'tg_metadata' object with camelCase keys.
+# 2. Add 'post_metadata' as a nested object only if status is 'completed'.
+FILTER_FILE=$(mktemp)
+cat << 'EOF_JQ_FILTER' > "$FILTER_FILE"
+# 1. Start with the base object, including the nested tg_metadata
+#    and renaming the keys inside it.
+{
+  status: $status,
+  job_id: $jobId,
+  tg_metadata: {
+    chatId: $tgMetadata.chat_id,
+    messageId: $tgMetadata.message_id
+  }
+}
+# 2. Pipe to the 'failed' status modifier
+| if $status == "failed" then
+    . + {message: $message, error_list: $errors}
+  else
+    . # Pass through unchanged
+  end
+# 3. Pipe to the 'completed' status modifier
+| if $status == "completed" and $ARGS.named.data != null and $ARGS.named.data != "" then
+    . + {post_metadata: ($ARGS.named.data | fromjson)} # Merge data nested under "post_metadata"
+  else
+    . # Pass through unchanged
+  end
+EOF_JQ_FILTER
 
 PRIMARY_PAYLOAD=$(jq -n \
   --arg status "$STATUS" \
@@ -68,9 +91,12 @@ PRIMARY_PAYLOAD=$(jq -n \
   --argjson tgMetadata "$MSG_METADATA_JSON" \
   --arg message "$MESSAGE" \
   --argjson errors "$ERROR_LIST_JSON" \
-  "$JQ_FILTER"
   --arg data "$DATA_JSON" \
+  -f "$FILTER_FILE"
 )
+
+# Clean up the temp file immediately
+rm -f "$FILTER_FILE"
 
 # Capture stderr and stdout from curl, and its exit code
 # We use --fail to make curl exit with 22 on 4xx/5xx errors
@@ -105,26 +131,30 @@ rm -f "$curl_output_file"
 if [ "$STATUS" == "failed" ]; then
     echo "::warning::Triggering direct Telegram API fallback..." >&2
 
+    # This fallback still works because MSG_METADATA_JSON still
+    # contains the original "chat_id" and "message_id" (snake_case).
     CHAT_ID=$(echo "$MSG_METADATA_JSON" | jq -r '.chat_id')
     MESSAGE_ID=$(echo "$MSG_METADATA_JSON" | jq -r '.message_id')
     
     # We now use the $MESSAGE variable as the base
-    FALLBACK_TEXT="❌ *Status*: Failed.\n${MESSAGE}\n\n*Errors:*\n${ERROR_PLAIN_TEXT}\n\n---\n*Notification service failed (Code: $curl_exit_code).*\n\`${curl_error}\`\n\nReport to @a1x5h04."
+    FALLBACK_TEXT=$(echo -e "❌ *Status*: Failed.\n${MESSAGE}\n\n*Errors:*\n${ERROR_PLAIN_TEXT}\n\n---\n*Notification service failed (Code: $curl_exit_code).*\\n\`${ESCAPED_CURL_ERROR}\`\\n\\nReport to @a1x5h04.")
 
-    FALLBACK_PAYLOAD=$(jq -n -c \
+    # --- Second Fallback: Send New Message (as a reply to the failed edit) ---
+    # This executes if editMessageText failed (exit code 22).
+
+    FALLBACK_SEND_PAYLOAD=$(jq -n -c \
       --arg cid "$CHAT_ID" \
       --arg mid "$MESSAGE_ID" \
       --arg text "$FALLBACK_TEXT" \
-      '{chat_id: $cid, message_id: $mid, text: $text, parse_mode: "Markdown"}')
+      '{chat_id: $cid, text: $text, parse_mode: "Markdown", reply_parameters: { message_id: $mid } }')
 
     curl --request POST \
-         --header "Content-Type: application/json" \
-         --data "$FALLBACK_PAYLOAD" \
-         --silent \
-         --show-error \
-         --fail \
-         --max-time 15 \
-         "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText"
+        --header "Content-Type: application/json" \
+        --data "$FALLBACK_SEND_PAYLOAD" \
+        --show-error \
+        --fail \
+        --max-time 15 \
+        "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" 1>&2
     
     echo "Fallback notification attempt finished." >&2
 
@@ -137,4 +167,5 @@ exit 0
 }
 
 main "$@"
+
 
