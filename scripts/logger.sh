@@ -58,9 +58,15 @@ log_info() {
 # For non-fatal warnings (e.g., "Config value 'x' not set, using default.")
 # Only logs if $RUN_DEBUG_LOGS is "true".
 log_warn() {
+  local user_message="$1"
+
+  echo "${user_message}" >> "$USER_ERROR_LOG"
+
   if [[ "${RUN_DEBUG_LOGS}" == "true" ]]; then
     _log_internal "WARN" "$1"
   fi
+  
+  echo "::warning::${user_message}" >&2
 }
 
 # For critical, user-facing errors (e.g., "Video duration exceeds 30s.")
