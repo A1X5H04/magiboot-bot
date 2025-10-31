@@ -18,23 +18,10 @@ export const makeGitHubProvider = (config: GithubProviderConfig): CIProvider => 
   }
 
 
-  const isAvailable: CIProvider["isAvailable"] = async () => {
-    const url = `${baseAPIUrl}/runs?status=in_progress&per_page=1`;
-    const res = await fetch(url, {
-      headers: {
-        "Accept": "application/vnd.github+json",
-        "Authorization": `Bearer ${token}`,
-        "User-Agent": "Magiboot-TG-Bot"
-      }
-    });
-
-    if (!res.ok) {
-      const resData = await res.text();
-      console.log(resData);
-      throw new Error(`GitHub API error: ${res.status}`);
-    }
-    const data: { total_count: number } = await res.json();
-    return data.total_count === 0;
+  const isAvailable: CIProvider["isAvailable"] = () => {
+    // Github has its own internal queue and can be send concurrently.
+    // So we will just send 'yes' for all of the request.
+    return Promise.resolve(true)
   };
 
 
