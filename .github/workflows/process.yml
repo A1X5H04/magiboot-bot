@@ -22,6 +22,8 @@ on:
 env:
   BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   STORAGE_PROVIDER_API_KEY: ${{ secrets.STORAGE_PROVIDER_API_KEY }}
+  TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
+
   INTERNAL_DEBUG_LOG: ${{ github.workspace }}/build_log.jsonl
   USER_ERROR_LOG: ${{ github.workspace }}/user_errors.log
   RUN_DEBUG_LOG: "false" # "true" for verbose logging
@@ -34,14 +36,16 @@ jobs:
   build_and_deploy:
     name: "Build & Deploy Module"
     runs-on: ubuntu-latest
-    outputs:
-      msg_metadata: ${{ steps.publish_outputs.outputs.msg_metadata }}
-      job_id: ${{ steps.publish_outputs.outputs.job_id }}
-      stage_b64: ${{ steps.publish_outputs.outputs.stage_b64 }}
-      error_json_array_b64: ${{ steps.publish_outputs.outputs.error_json_array_b64 }}
-      error_plain_text_b64: ${{ steps.publish_outputs.outputs.error_plain_text_b64 }}
+    # outputs:
+    #   msg_metadata: ${{ steps.publish_outputs.outputs.msg_metadata }}
+    #   job_id: ${{ steps.publish_outputs.outputs.job_id }}
+    #   stage_b64: ${{ steps.publish_outputs.outputs.stage_b64 }}
+    #   error_json_array_b64: ${{ steps.publish_outputs.outputs.error_json_array_b64 }}
+    #   error_plain_text_b64: ${{ steps.publish_outputs.outputs.error_plain_text_b64 }}
     env:
       CURRENT_STAGE: "Workflow Setup"
+      JOB_ID: ${{ fromJson(inputs.other_metadata).jobId }}
+      METADATA_JSON: ${{ inputs.other_metadata }}
 
     steps:
       # === SETUP STEPS ===
@@ -56,42 +60,47 @@ jobs:
           sudo apt-get install -y jq curl >/dev/null 2>&1
           log_info "Dependencies installed"
 
-      - name: "Parse and validate metadata"
-        id: parse_metadata
-        # FIX: Pass complex JSON input via an environment variable
-        # This prevents shell errors if the JSON contains single quotes.
-        env:
-          METADATA_JSON: ${{ inputs.other_metadata }}
+      - name: "Make scripts executable"
+        run: chmod +x scripts/notify.sh scripts/logger.sh scripts/prepare_bootanimation.sh scripts/package_module.sh scripts/upload_file.sh
+
+      - name: "Set Notification Metadata Env"
         run: |
           source scripts/logger.sh
-          log_info "Parsing workflow metadata..."
+          log_info "Setting MSG_METADATA_JSON environment variable..."
+          # Use jq to extract the .msg_metadata object and output as compact JSON
+          # This is the same as 'fromJson(...).msg_metadata | toJson'
+          echo "MSG_METADATA_JSON=$(echo "$METADATA_JSON" | jq -c '.msg_metadata')" >> $GITHUB_ENV
+
+      # - name: "Parse and validate metadata"
+      #   id: parse_metadata
+      #   # FIX: Pass complex JSON input via an environment variable
+      #   # This prevents shell errors if the JSON contains single quotes.
+      #   env:
+      #     METADATA_JSON: ${{ inputs.other_metadata }}
+      #   run: |
+      #     source scripts/logger.sh
+      #     log_info "Parsing workflow metadata..."
           
-          if [ -z "$METADATA_JSON" ]; then
-            log_fatal "Metadata JSON is empty. Workflow cannot proceed."
-            exit 1
-          fi
+      #     if [ -z "$METADATA_JSON" ]; then
+      #       log_fatal "Metadata JSON is empty. Workflow cannot proceed."
+      #       exit 1
+      #     fi
 
-          PARSED_META=$(echo "$METADATA_JSON" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id, "bootanim_config": .bootanim_config, "tags": .tags }')
-          MSG_METADATA=$(echo "$METADATA_JSON" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
+      #     PARSED_META=$(echo "$METADATA_JSON" | jq -c '{ "jobId": .jobId, "chatId": .msg_metadata.chatId, "messageId": .msg_metadata.messageId, "title": .title, "creator": .creator, "ref_message_id": .ref_message_id, "unique_file_id": .unique_file_id, "bootanim_config": .bootanim_config, "tags": .tags }')
+      #     MSG_METADATA=$(echo "$METADATA_JSON" | jq -c '{ "chat_id": .msg_metadata.chatId, "message_id": .msg_metadata.messageId }')
 
-          if [ -z "$PARSED_META" ] || [ -z "$MSG_METADATA" ] || [ "$PARSED_META" == "null" ] || [ "$MSG_METADATA" == "null" ]; then
-            log_fatal "Failed to parse metadata JSON. Check input format."
-            exit 1
-          fi
+      #     if [ -z "$PARSED_META" ] || [ -z "$MSG_METADATA" ] || [ "$PARSED_META" == "null" ] || [ "$MSG_METADATA" == "null" ]; then
+      #       log_fatal "Failed to parse metadata JSON. Check input format."
+      #       exit 1
+      #     fi
 
-          echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
-          echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
-          log_info "Metadata parsed."
+      #     echo "json_string=${PARSED_META}" >> "$GITHUB_OUTPUT"
+      #     echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
+      #     log_info "Metadata parsed."
 
-      - name: "Send 'Setup Started' status"
-        uses: ./.github/actions/send-status
-        env:
-          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-        with:
-          status: "processing"
-          message: "🚀 Workflow initiated. Setting up environment..."
-          msg_metadata: ${{ steps.parse_metadata.outputs.msg_metadata }}
-          progress: 5
+      - name: "Send 'Processing' status"
+        run: |
+          scripts/notify.sh --status "processing"
 
       - name: "Download video file"
         id: download
@@ -105,13 +114,11 @@ jobs:
           API_RESPONSE=$(curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${FILE_ID}")
           if [[ "$(echo "$API_RESPONSE" | jq -r '.ok')" != "true" ]]; then
             log_fatal "Telegram API Error: $(echo "$API_RESPONSE" | jq -r '.description')"
-            exit 1 # FIX: Ensure workflow stops on fatal error
           fi
           FILE_PATH=$(echo "$API_RESPONSE" | jq -r '.result.file_path')
           curl -s -L -o "video.mp4" "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}"
           log_info "Video downloaded successfully to video.mp4"
 
-      # === PROCESS & PACKAGE STEPS ===
       - name: "Cache FFmpeg Docker image"
         id: cache-ffmpeg
         uses: actions/cache@v4
@@ -135,36 +142,30 @@ jobs:
             log_info "FFmpeg saved to cache."
           fi
 
-      - name: "Send 'Processing Started' status"
-        uses: ./.github/actions/send-status
-        env:
-          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-        with:
-          status: "processing"
-          message: "🎬 Video processing has started..."
-          msg_metadata: ${{ steps.parse_metadata.outputs.msg_metadata }}
-          progress: 25
-
-      - name: "Run Processing Script (Capture stdout/stderr)"
+      - name: "Run Processing Script"
         id: run_processing
         # FIX: Pass the parsed JSON string via env var to avoid quote injection
         env:
           METADATA_JSON_ENV: ${{ steps.parse_metadata.outputs.json_string }}
         run: |
           source scripts/logger.sh
-          chmod +x scripts/prepare_bootanimation.sh
+          chmod +x scripts/prepare_bootanimation.sh scripts/notify.sh scripts/logger.sh
           log_info "Starting containerized video processing..."
-          # Note: METADATA_JSON_ENV is automatically available inside the 'run' script
+          
+          CONTAINER_USER_ERROR_LOG="/workdir/user_errors.log"
+          CONTAINER_INTERNAL_DEBUG_LOG="/workdir/build_log.jsonl"
+
           CONTAINER_COMMAND="chmod +x scripts/logger.sh scripts/prepare_bootanimation.sh && apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
           
           # Execute, capturing stdout to variable and stderr to file
           OUTPUT_STRING=$(docker run --rm -v "$(pwd):/workdir" -w /workdir \
-          -e METADATA_JSON="$METADATA_JSON_ENV" \
-          -e INTERNAL_DEBUG_LOG \
-          -e USER_ERROR_LOG \
-          -e RUN_DEBUG_LOG \
-          --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
-          -c "$CONTAINER_COMMAND")
+            -e METADATA_JSON \
+            -e "INTERNAL_DEBUG_LOG=${CONTAINER_INTERNAL_DEBUG_LOG}" \
+            -e "USER_ERROR_LOG=${CONTAINER_USER_ERROR_LOG}" \
+            -e RUN_DEBUG_LOGS \
+            -e CURRENT_STAGE \
+            --entrypoint "bash" jrottenberg/ffmpeg:4.4-ubuntu \
+            -c "$CONTAINER_COMMAND")
           
           log_info "Video processing script finished."
           while IFS='=' read -r key value; do
@@ -177,57 +178,16 @@ jobs:
             fi
           done <<< "$OUTPUT_STRING"
 
-      - name: "Capture Error Log on Failure"
-        if: failure()
-        id: capture_error_log
-        run: |
-          source scripts/logger.sh
-          log_info "Capturing user-facing logs for failure report..."
-
-          STAGE_NAME="${{ env.CURRENT_STAGE }}"
-          echo "stage=${STAGE_NAME}" >> "$GITHUB_OUTPUT"
-
-          if [ ! -f "$USER_ERROR_LOG" ]; then
-            log_warn "Job failed, but no user error log was found."
-            
-            ERR_MSG="An unknown processing error occurred on stage: $STAGE_NAME"
-            echo "error_json_array=[\"$ERR_MSG\"]" >> "$GITHUB_OUTPUT"
-            echo "error_plain_text=- $ERR_MSG" >> "$GITHUB_OUTPUT"
-          else
-            log_info "Found user errors, formatting for output..."
-            
-            # 1. Format as JSON Array for Webhook
-            ERROR_JSON_ARRAY=$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$USER_ERROR_LOG")
-            echo "error_json_array=${ERROR_JSON_ARRAY}" >> "$GITHUB_OUTPUT"
-            
-            # 2. Format as Plain-Text List for Fallback
-            ERROR_PLAIN_TEXT=$(sed 's/^/- /' "$USER_ERROR_LOG")
-            echo "error_plain_text=${ERROR_PLAIN_TEXT}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: "Send 'Packaging Started' status"
-        uses: ./.github/actions/send-status
-        env:
-          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-        with:
-          status: "processing"
-          message: "📦 Packaging the flashable module..."
-          msg_metadata: ${{ steps.parse_metadata.outputs.msg_metadata }}
-          progress: 65
-
       - name: "Package the flashable module"
         id: package_module
-        # FIX: Pass the parsed JSON string via env var to avoid quote injection
-        env:
-          JSON_STRING: ${{ steps.parse_metadata.outputs.json_string }}
         run: |
           source scripts/logger.sh
           echo "CURRENT_STAGE=Module Packaging" >> $GITHUB_ENV
 
           chmod +x scripts/package_module.sh
           log_info "Packaging final module..."
-          MODULE_NAME=$(echo "$JSON_STRING" | jq -r '.title')
-          MODULE_CREATOR=$(echo "$JSON_STRING" | jq -r '.creator.name')
+          MODULE_NAME=$(echo "$METADATA_JSON" | jq -r '.title')
+          MODULE_CREATOR=$(echo "$METADATA_JSON" | jq -r '.creator.name')
           FINAL_FILENAME=$(scripts/package_module.sh "${{ steps.run_processing.outputs.boot_output_dir_path }}" ./scripts/module_template --module-name "$MODULE_NAME" --module-creator "$MODULE_CREATOR")
           echo "filename=${FINAL_FILENAME}" >> "$GITHUB_OUTPUT"
           log_info "Module packaged: $FINAL_FILENAME"
@@ -271,17 +231,6 @@ jobs:
           log_info "Preview URL: $PREVIEW_URL"
           echo "preview_url=${PREVIEW_URL}" >> "$GITHUB_OUTPUT"
 
-      # === DEPLOY STEPS ===
-      - name: "Send 'Uploading' status"
-        uses: ./.github/actions/send-status
-        env:
-          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-        with:
-          status: "processing"
-          message: "☁️ Uploading module to storage..."
-          msg_metadata: ${{ steps.parse_metadata.outputs.msg_metadata }}
-          progress: 85
-
       - name: "Upload module and get download link"
         id: upload
         run: |
@@ -299,28 +248,37 @@ jobs:
         # FIX: Pass ALL dynamic inputs via environment variables
         # This prevents the "JToken" error by not nesting expressions
         # inside the jq command string.
-        env:  
-          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-          INPUT_JOB_ID: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
-          INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
-          BASE_META: ${{ steps.parse_metadata.outputs.json_string }}
-          DOWNLOAD_URL: ${{ steps.upload.outputs.download_link }}
-          PREVIEW_URL: ${{ steps.upload_preview.outputs.preview_url }}
-          VIDEO_RES: ${{ steps.run_processing.outputs.boot_video_resolution }}
-          BOOT_RES: ${{ steps.run_processing.outputs.boot_bootanimation_resolution }}
-          BOOT_FPS: ${{ steps.run_processing.outputs.boot_video_fps }}
-          BOOT_TYPE: ${{ steps.run_processing.outputs.boot_bootanimation_module_type }}
-          DURATION: ${{ steps.run_processing.outputs.boot_video_duration }}
-          VIDEO_ID: ${{ inputs.video }}
+        # env:  
+        #   TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
+        #   INPUT_JOB_ID: ${{ fromJson(steps.parse_metadata.outputs.json_string).jobId }}
+        #   INPUT_MSG_METADATA: ${{ steps.parse_metadata.outputs.msg_metadata }}
+        #   BASE_META: ${{ steps.parse_metadata.outputs.json_string }}
+        #   DOWNLOAD_URL: ${{ steps.upload.outputs.download_link }}
+        #   PREVIEW_URL: ${{ steps.upload_preview.outputs.preview_url }}
+        #   VIDEO_RES: ${{ steps.run_processing.outputs.boot_video_resolution }}
+        #   BOOT_RES: ${{ steps.run_processing.outputs.boot_bootanimation_resolution }}
+        #   BOOT_FPS: ${{ steps.run_processing.outputs.boot_video_fps }}
+        #   BOOT_TYPE: ${{ steps.run_processing.outputs.boot_bootanimation_module_type }}
+        #   DURATION: ${{ steps.run_processing.outputs.boot_video_duration }}
+        #   VIDEO_ID: ${{ inputs.video }}
         run: |
           source scripts/logger.sh
           echo "CURRENT_STAGE=Prepare Final Post" >> $GITHUB_ENV
           
+          # Read all the outputs from previous steps
+          DOWNLOAD_URL="${{ steps.upload.outputs.download_link }}"
+          PREVIEW_URL="${{ steps.upload_preview.outputs.preview_url }}"
+          VIDEO_RES="${{ steps.run_processing.outputs.boot_video_resolution }}"
+          BOOT_RES="${{ steps.run_processing.outputs.boot_bootanimation_resolution }}"
+          BOOT_FPS="${{ steps.run_processing.outputs.boot_video_fps }}"
+          BOOT_TYPE="${{ steps.run_processing.outputs.boot_bootanimation_module_type }}"
+          DURATION="${{ steps.run_processing.outputs.boot_video_duration }}"
+          VIDEO_ID="${{ inputs.video }}"
 
           log_info "Generating final post metadata..."
           # Now, the jq command safely reads from env vars.
           POST_METADATA=$(jq -n -c \
-            --argjson base_meta "$BASE_META" \
+            --argjson base_meta "$METADATA_JSON" \
             --arg download_url "$DOWNLOAD_URL" \
             --arg preview_url "$PREVIEW_URL" \
             --arg video_res "$VIDEO_RES" \
@@ -346,106 +304,19 @@ jobs:
               }
           ')
 
-          echo "job_id=$(echo "$BASE_META" | jq -r .jobId)" >> "$GITHUB_OUTPUT"
           echo "post_metadata=$POST_METADATA" >> "$GITHUB_OUTPUT"
           log_info "Post metadata generated."
 
       - name: "Send 'Completed' status"
-        uses: ./.github/actions/send-status
-        env:
-          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-        with:
-          status: "completed"
-          message: "✅ Success! Your bootanimation is posted on channel."
-          job_id: ${{ steps.post_data.outputs.job_id }}
-          msg_metadata: ${{ steps.parse_metadata.outputs.msg_metadata }}
-          data: ${{ steps.post_data.outputs.post_metadata }}
-
-      # === FINAL STEP ===
-      - name: "Publish Job Outputs"
-        id: publish_outputs
-        if: always() # This step runs even if the job fails
-        env:
-          MSG_METADATA: '${{ steps.parse_metadata.outputs.msg_metadata }}'
-          META_JSON: '${{ steps.parse_metadata.outputs.json_string }}'
-          STAGE_NAME: '${{ steps.capture_error_log.outputs.stage }}'
-          ERROR_JSON: '${{ steps.capture_error_log.outputs.error_json_array }}'
-          ERROR_PLAIN: '${{ steps.capture_error_log.outputs.error_plain_text }}'
+        if: success()
         run: |
-          echo "msg_metadata=${MSG_METADATA}" >> "$GITHUB_OUTPUT"
-          echo "job_id=$(echo "$META_JSON" | jq -r .jobId)" >> "$GITHUB_OUTPUT"
-          
-          echo "stage_b64=$(echo -n "$STAGE_NAME" | base64 -w 0)" >> "$GITHUB_OUTPUT"
-          echo "error_json_array_b64=$(echo -n "$ERROR_JSON" | base64 -w 0)" >> "$GITHUB_OUTPUT"
-          echo "error_plain_text_b64=$(echo -n "$ERROR_PLAIN" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          echo "CURRENT_STAGE=Completed" >> $GITHUB_ENV
+          scripts/notify.sh --status "completed" \
+                 --data '${{ steps.post_data.outputs.post_metadata }}'
 
-
-  # =====================================================================================
-  # JOB 2: NOTIFY FAILURE
-  # - This job only runs if the main 'build_and_deploy' job fails.
-  # =====================================================================================
-  notify_failure:
-    name: "Notify on Failure"
-    runs-on: ubuntu-latest
-    needs: [build_and_deploy]
-    if: failure() && !cancelled()
-
-    steps:
-      - name: "Checkout repository"
-        uses: actions/checkout@v4
-
-      - name: "Decode Errors Outputs"
-        id: decode_errors
+      # This step will ONLY run if ANY preceding step failed
+      - name: "Send 'Failed' status"
+        if: failure()
         run: |
-          DECODED_JSON_ARRAY=$(echo "${{ needs.build_and_deploy.outputs.error_json_array_b64 }}" | base64 --decode)
-          if [ -z "$DECODED_JSON_ARRAY" ]; then
-            DECODED_JSON_ARRAY="[]"
-          fi
-          echo "json_array_string=${DECODED_JSON_ARRAY}" >> "$GITHUB_OUTPUT"
-          
-          # FIX: Write the JSON string to the environment
-          # This allows the next step to read it as a raw string.
-          echo "ERROR_LIST_JSON=${DECODED_JSON_ARRAY}" >> $GITHUB_ENV
-        
-      - name: "Send Failure via Webhook"
-        id: try_webhook
-        continue-on-error: true
-        uses: ./.github/actions/send-status
-        env:
-          TELEGRAM_BOT_WEBHOOK_URL: ${{ secrets.TELEGRAM_BOT_WEBHOOK_URL }}
-        with:
-          status: "failed"
-          message: "An error occurred during video processing."
-          job_id: ${{ needs.build_and_deploy.outputs.job_id }}
-          msg_metadata: ${{ needs.build_and_deploy.outputs.msg_metadata }}
-          # FIX: Read the raw JSON string from the env var.
-          # This prevents the YAML parser from seeing `[` as a sequence.
-          error_list: ${{ env.ERROR_LIST_JSON }}
-
-      - name: Send Failure with Telegram API (Fallback)
-        if: steps.try_webhook.outcome == 'failure'
-        env:
-          BOT_TOKEN: ${{ env.BOT_TOKEN }}
-          MSG_METADATA: ${{ needs.build_and_deploy.outputs.msg_metadata }}
-          STAGE_B64: ${{ needs.build_and_deploy.outputs.stage_b64 }}
-          ERROR_PLAIN_TEXT_B64: ${{ needs.build_and_deploy.outputs.error_plain_text_b64 }}
-        run: |
-          echo "::warning::Webhook send failed. Initiating direct API fallback..."
-          set -e
-          CHAT_ID=$(echo "$MSG_METADATA" | jq -r .chat_id)
-          MESSAGE_ID=$(echo "$MSG_METADATA" | jq -r .message_id)
-          
-          STAGE_NAME=$(echo "$STAGE_B64" | base64 --decode)
-          PLAIN_ERRORS=$(echo "$ERROR_PLAIN_TEXT_B64" | base64 --decode)
-          
-          PAYLOAD=$(jq -n -c \
-            --arg cid "$CHAT_ID" \
-            --arg mid "$MESSAGE_ID" \
-            --arg stage "$STAGE_NAME" \
-            --arg errors "$PLAIN_ERRORS" \
-            '{chat_id: $cid, message_id: $mid, text: "❌ *Status*: Failed.\nProcessing failed on stage: *\($stage)*\n\n*Errors:*\n\($errors)\n\nReport to @a1x5h04.", parse_mode: "Markdown"}')
-
-          # Send directly to Telegram
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+          scripts/notify.sh --status "failed" \
+                 --message "Job failed at stage: $CURRENT_STAGE"
