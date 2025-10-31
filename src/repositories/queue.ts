@@ -63,3 +63,43 @@ export async function findOldestByStatus(client: Client, status: JobStatus): Pro
     }
     return mapToModel<JobQueueModel>(rs.rows[0]);
 }
+
+export async function findLastJobForProcessing(client: Client): Promise<JobQueueModel | null> {
+    const rs = await client.execute(`
+            UPDATE queue_jobs
+            SET status = 'processing',
+                updated_at = (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            WHERE id = (
+                SELECT id
+                FROM queue_jobs
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT 1
+            )
+            RETURNING *;
+        `)
+
+    if (rs.rows.length === 0) {
+        return null;
+    }
+
+    return mapToModel<JobQueueModel>(rs.rows[0]);
+}
+
+export async function findJobForProcessing(client: Client, jobId: string): Promise<JobQueueModel | null> {
+    const rs = await client.execute({ 
+        sql:`
+            UPDATE queue_jobs
+            SET status = 'processing',
+                updated_at = (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            WHERE id = ? AND status = 'pending'
+            RETURNING *;
+        `, 
+        args: [jobId]})
+
+    if (rs.rows.length === 0) {
+        return null;
+    }
+
+    return mapToModel<JobQueueModel>(rs.rows[0]);
+}
