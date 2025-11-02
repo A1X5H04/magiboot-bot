@@ -7,7 +7,7 @@
 # This task can be triggered via API with custom environment variables
 process_video_task:
   # Only run when explicitly triggered via API with TRIGGER_TASK=process_video
-  only_if: $TRIGGER_TASK == "process_video"
+  only_if: $VIDEO_FILE_ID != ""
   
   # Use Ubuntu with Docker support
   container:
