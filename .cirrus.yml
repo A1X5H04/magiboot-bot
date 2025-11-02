@@ -1,0 +1,497 @@
+# ==============================================================================
+#
+#  Modular Video Processing Workflow for Cirrus CI (Robust & Error-Proof)
+#
+# ==============================================================================
+
+# This task can be triggered via API with custom environment variables
+process_video_task:
+  # Only run when explicitly triggered via API with TRIGGER_TASK=process_video
+  only_if: $TRIGGER_TASK == "process_video"
+  
+  # Use Ubuntu with Docker support
+  container:
+    image: ubuntu:22.04
+    cpu: 2
+    memory: 4GB
+  
+  # Environment variables (secrets injected via ENCRYPTED[] syntax)
+  env:
+    BOT_TOKEN: ENCRYPTED[!104daba37b8429704fc56c42478d213c88450444296e4a9c9dc14d5a79aa04424a9cf193243f3cdeb920fbc399915f2e!]
+    STORAGE_PROVIDER_API_KEY: ENCRYPTED[!12666edf544a90fbf442a8f6d0965e4c3d4302b517a33e5b6696272915ba933d31172b61dfae0eb86e3701f1d4699ea5!]
+    TELEGRAM_BOT_WEBHOOK_URL: ENCRYPTED[!28e69396beb917b81f6568e715b806634001193043755a7e3ab4b8dfe6e5d896a301a5d6840efb9b7dd7803aa779758a!]
+    INTERNAL_DEBUG_LOG: $CIRRUS_WORKING_DIR/build_log.jsonl
+    USER_ERROR_LOG: $CIRRUS_WORKING_DIR/user_errors.log
+    RUN_DEBUG_LOG: "false"
+    CURRENT_STAGE: "Workflow Setup"
+    NOTIFICATION_FAILED: "false"
+    # These will be injected via API call
+    VIDEO_FILE_ID: ""
+    METADATA_JSON: ""
+    JOB_ID: ""
+  
+  # ============================================================================
+  # SETUP & DEPENDENCIES
+  # ============================================================================
+  
+  install_dependencies_script: |
+    set -e
+    export CURRENT_STAGE="Dependency Installation"
+    
+    echo "Installing system dependencies..."
+    apt-get update -qq
+    apt-get install -y -qq curl jq git ca-certificates > /dev/null 2>&1
+    
+    echo "Installing Docker..."
+    apt-get install -y -qq docker.io > /dev/null 2>&1
+    
+    echo "Dependencies installed successfully"
+  
+  checkout_script: |
+    set -e
+    export CURRENT_STAGE="Repository Checkout"
+    
+    echo "Repository already checked out by Cirrus CI"
+    ls -la
+  
+  make_executable_script: |
+    set -e
+    chmod +x scripts/notify.sh scripts/logger.sh scripts/prepare_bootanimation.sh scripts/package_module.sh scripts/upload_file.sh
+    echo "Scripts made executable"
+  
+  validate_metadata_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Metadata Validation"
+    
+    log_info "Validating input metadata..."
+    
+    if [ -z "$METADATA_JSON" ]; then
+      log_fatal "METADATA_JSON environment variable is empty"
+      exit 1
+    fi
+    
+    # Validate that METADATA_JSON is valid JSON
+    if ! echo "$METADATA_JSON" | jq empty 2>/dev/null; then
+      log_fatal "Invalid JSON in METADATA_JSON"
+      exit 1
+    fi
+    
+    # Extract msg_metadata with proper error handling
+    MSG_META=$(echo "$METADATA_JSON" | jq -c '.msg_metadata // empty')
+    
+    if [ -z "$MSG_META" ] || [ "$MSG_META" == "null" ]; then
+      log_fatal "Missing .msg_metadata in METADATA_JSON"
+      echo "Input was: $METADATA_JSON"
+      exit 1
+    fi
+    
+    # Validate required fields in msg_metadata
+    CHAT_ID=$(echo "$MSG_META" | jq -r '.chatId // .chat_id // empty')
+    MESSAGE_ID=$(echo "$MSG_META" | jq -r '.messageId // .message_id // empty')
+    
+    if [ -z "$CHAT_ID" ] || [ "$CHAT_ID" == "null" ]; then
+      log_fatal "Missing chatId in msg_metadata"
+      exit 1
+    fi
+    
+    if [ -z "$MESSAGE_ID" ] || [ "$MESSAGE_ID" == "null" ]; then
+      log_fatal "Missing messageId in msg_metadata"
+      exit 1
+    fi
+    
+    log_info "Metadata validated: ChatID=$CHAT_ID, MessageID=$MESSAGE_ID"
+    
+    # Export for subsequent scripts
+    echo "export MSG_METADATA_JSON='$MSG_META'" >> $CIRRUS_ENV
+    
+    log_info "MSG_METADATA_JSON set successfully"
+  
+  # ============================================================================
+  # NOTIFICATION: Processing Started
+  # ============================================================================
+  
+  notify_processing_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Notification - Processing"
+    
+    if scripts/notify.sh --status "processing"; then
+      log_info "Processing notification sent successfully"
+    else
+      echo "NOTIFICATION_FAILED=true" >> $CIRRUS_ENV
+      log_info "Processing notification failed, but continuing workflow"
+    fi
+  
+  # ============================================================================
+  # VIDEO DOWNLOAD
+  # ============================================================================
+  
+  download_video_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Video Download"
+    
+    if [ -z "$VIDEO_FILE_ID" ]; then
+      log_fatal "VIDEO_FILE_ID is empty"
+      exit 1
+    fi
+    
+    log_info "Downloading video file (FileID: $VIDEO_FILE_ID)..."
+    
+    API_RESPONSE=$(curl -s -f --max-time 30 \
+      "https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${VIDEO_FILE_ID}" || echo '{"ok":false}')
+    
+    if [[ "$(echo "$API_RESPONSE" | jq -r '.ok')" != "true" ]]; then
+      ERROR_DESC=$(echo "$API_RESPONSE" | jq -r '.description // "Unknown API error"')
+      log_fatal "Telegram API Error: $ERROR_DESC"
+      exit 1
+    fi
+    
+    FILE_PATH=$(echo "$API_RESPONSE" | jq -r '.result.file_path')
+    
+    if [ -z "$FILE_PATH" ] || [ "$FILE_PATH" == "null" ]; then
+      log_fatal "Failed to get file path from Telegram API"
+      exit 1
+    fi
+    
+    if ! curl -s -f -L --max-time 60 \
+      -o "video.mp4" \
+      "https://api.telegram.org/file/bot${BOT_TOKEN}/${FILE_PATH}"; then
+      log_fatal "Failed to download video file"
+      exit 1
+    fi
+    
+    if [ ! -f "video.mp4" ] || [ ! -s "video.mp4" ]; then
+      log_fatal "Downloaded video file is missing or empty"
+      exit 1
+    fi
+    
+    log_info "Video downloaded successfully ($(du -h video.mp4 | cut -f1))"
+  
+  # ============================================================================
+  # FFMPEG SETUP WITH CACHING
+  # ============================================================================
+  
+  ffmpeg_cache:
+    folder: /tmp/docker-cache
+    fingerprint_script: echo "ffmpeg-4.4-ubuntu"
+    populate_script: |
+      set -e
+      mkdir -p /tmp/docker-cache
+      echo "Pulling FFmpeg Docker image..."
+      docker pull jrottenberg/ffmpeg:4.4-ubuntu
+      docker save jrottenberg/ffmpeg:4.4-ubuntu -o /tmp/docker-cache/ffmpeg.tar
+      echo "FFmpeg image cached"
+  
+  load_ffmpeg_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="FFmpeg Setup"
+    
+    if [ -f /tmp/docker-cache/ffmpeg.tar ]; then
+      log_info "Loading FFmpeg from cache..."
+      if docker load -i /tmp/docker-cache/ffmpeg.tar; then
+        log_info "FFmpeg loaded from cache successfully"
+      else
+        log_info "Cache corrupted, pulling fresh image..."
+        docker pull jrottenberg/ffmpeg:4.4-ubuntu
+      fi
+    else
+      log_info "Cache miss, pulling FFmpeg from registry..."
+      docker pull jrottenberg/ffmpeg:4.4-ubuntu
+    fi
+  
+  # ============================================================================
+  # VIDEO PROCESSING
+  # ============================================================================
+  
+  process_video_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Video Processing"
+    
+    log_info "Starting containerized video processing..."
+    
+    CONTAINER_USER_ERROR_LOG="/workdir/user_errors.log"
+    CONTAINER_INTERNAL_DEBUG_LOG="/workdir/build_log.jsonl"
+    
+    CONTAINER_COMMAND="chmod +x scripts/logger.sh scripts/prepare_bootanimation.sh && apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
+    
+    # Execute processing with error handling
+    set +e
+    OUTPUT_STRING=$(docker run --rm \
+      -v "$(pwd):/workdir" \
+      -w /workdir \
+      -e METADATA_JSON \
+      -e "INTERNAL_DEBUG_LOG=${CONTAINER_INTERNAL_DEBUG_LOG}" \
+      -e "USER_ERROR_LOG=${CONTAINER_USER_ERROR_LOG}" \
+      -e RUN_DEBUG_LOGS \
+      -e CURRENT_STAGE \
+      --entrypoint "bash" \
+      jrottenberg/ffmpeg:4.4-ubuntu \
+      -c "$CONTAINER_COMMAND" 2>&1)
+    
+    PROCESSING_EXIT_CODE=$?
+    set -e
+    
+    if [ $PROCESSING_EXIT_CODE -ne 0 ]; then
+      log_fatal "Video processing failed with exit code $PROCESSING_EXIT_CODE"
+      echo "$OUTPUT_STRING" >> "$USER_ERROR_LOG"
+      exit 1
+    fi
+    
+    log_info "Video processing completed successfully"
+    
+    # Parse and export outputs
+    while IFS='=' read -r key value; do
+      if [ -n "$key" ] && [ -n "$value" ]; then
+        echo "export ${key}='${value}'" >> $CIRRUS_ENV
+      fi
+    done <<< "$OUTPUT_STRING"
+    
+    if ! echo "$OUTPUT_STRING" | grep -q "^boot_output_dir="; then
+      log_fatal "Processing script did not output boot_output_dir"
+      exit 1
+    fi
+    
+    log_info "Processing outputs exported to environment"
+  
+  # ============================================================================
+  # MODULE PACKAGING
+  # ============================================================================
+  
+  package_module_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Module Packaging"
+    
+    # Source the environment to get boot_output_dir
+    if [ -z "$boot_output_dir" ]; then
+      log_fatal "boot_output_dir not found in environment"
+      exit 1
+    fi
+    
+    BOOT_DIR="$boot_output_dir"
+    
+    if [ ! -d "$BOOT_DIR" ]; then
+      log_fatal "Boot output directory does not exist: $BOOT_DIR"
+      exit 1
+    fi
+    
+    log_info "Packaging module from: $BOOT_DIR"
+    
+    MODULE_NAME=$(echo "$METADATA_JSON" | jq -r '.title // "Bootanimation"')
+    MODULE_CREATOR=$(echo "$METADATA_JSON" | jq -r '.creator.name // "Unknown"')
+    
+    FINAL_FILENAME=$(scripts/package_module.sh \
+      "$BOOT_DIR" \
+      ./scripts/module_template \
+      --module-name "$MODULE_NAME" \
+      --module-creator "$MODULE_CREATOR")
+    
+    if [ -z "$FINAL_FILENAME" ] || [ ! -f "$FINAL_FILENAME" ]; then
+      log_fatal "Module packaging failed - output file not created"
+      exit 1
+    fi
+    
+    echo "export MODULE_FILENAME='$FINAL_FILENAME'" >> $CIRRUS_ENV
+    log_info "Module packaged successfully: $FINAL_FILENAME"
+  
+  # ============================================================================
+  # PREVIEW GENERATION
+  # ============================================================================
+  
+  generate_preview_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Preview Generation"
+    
+    log_info "Generating MP4 preview..."
+    
+    set +e
+    docker run --rm \
+      -v "$(pwd):/workdir" \
+      -w /workdir \
+      jrottenberg/ffmpeg:4.4-ubuntu \
+      -v error -hwaccel auto -i video.mp4 \
+      -vf "fps=15,scale=320:-2,format=yuv420p" \
+      -an -c:v libx264 -crf 28 -preset ultrafast \
+      -movflags +faststart preview.mp4 2>&1
+    
+    FFMPEG_EXIT=$?
+    set -e
+    
+    if [ $FFMPEG_EXIT -ne 0 ] || [ ! -f "preview.mp4" ] || [ ! -s "preview.mp4" ]; then
+      log_fatal "FFmpeg failed to generate preview.mp4 (exit code: $FFMPEG_EXIT)"
+      exit 1
+    fi
+    
+    log_info "Preview generated ($(du -h preview.mp4 | cut -f1))"
+    log_info "Uploading preview to tmpfiles.org..."
+    
+    set +e
+    API_RESPONSE=$(curl -f -s --max-time 60 \
+      -F "file=@preview.mp4" \
+      https://tmpfiles.org/api/v1/upload 2>&1)
+    UPLOAD_EXIT=$?
+    set -e
+    
+    if [ $UPLOAD_EXIT -ne 0 ]; then
+      log_fatal "Failed to upload preview (curl exit: $UPLOAD_EXIT)"
+      exit 1
+    fi
+    
+    if ! echo "$API_RESPONSE" | jq -e . >/dev/null 2>&1; then
+      log_fatal "tmpfiles.org returned non-JSON response: $API_RESPONSE"
+      exit 1
+    fi
+    
+    RAW_URL=$(echo "$API_RESPONSE" | jq -r '.data.url // empty')
+    
+    if [ -z "$RAW_URL" ] || [ "$RAW_URL" == "null" ]; then
+      log_fatal "Failed to extract URL from tmpfiles.org response"
+      exit 1
+    fi
+    
+    PREVIEW_URL=$(echo "$RAW_URL" | sed -e 's|http://|https://|' -e 's|tmpfiles.org/|tmpfiles.org/dl/|')
+    
+    log_info "Preview URL: $PREVIEW_URL"
+    echo "export PREVIEW_URL='$PREVIEW_URL'" >> $CIRRUS_ENV
+  
+  # ============================================================================
+  # MODULE UPLOAD
+  # ============================================================================
+  
+  upload_module_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Module Upload"
+    
+    if [ -z "$MODULE_FILENAME" ]; then
+      log_fatal "MODULE_FILENAME not found in environment"
+      exit 1
+    fi
+    
+    MODULE_FILE="$MODULE_FILENAME"
+    
+    if [ ! -f "$MODULE_FILE" ]; then
+      log_fatal "Module file not found: $MODULE_FILE"
+      exit 1
+    fi
+    
+    log_info "Uploading module: $MODULE_FILE"
+    
+    DOWNLOAD_LINK=$(scripts/upload_file.sh "$MODULE_FILE")
+    
+    if [ -z "$DOWNLOAD_LINK" ]; then
+      log_fatal "Module upload failed - no download link returned"
+      exit 1
+    fi
+    
+    echo "export DOWNLOAD_LINK='$DOWNLOAD_LINK'" >> $CIRRUS_ENV
+    log_info "Module uploaded successfully"
+  
+  # ============================================================================
+  # PREPARE POST METADATA
+  # ============================================================================
+  
+  prepare_post_metadata_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Post Metadata Preparation"
+    
+    log_info "Generating post metadata..."
+    
+    # Validate required fields
+    if [ -z "$DOWNLOAD_LINK" ] || [ -z "$PREVIEW_URL" ]; then
+      log_fatal "Missing required URLs for post metadata"
+      exit 1
+    fi
+    
+    POST_METADATA=$(jq -n -c \
+      --argjson base_meta "$METADATA_JSON" \
+      --arg download_url "$DOWNLOAD_LINK" \
+      --arg preview_url "$PREVIEW_URL" \
+      --arg video_res "${boot_video_resolution:-unknown}" \
+      --arg boot_res "${boot_bootanimation_resolution:-unknown}" \
+      --arg boot_fps "${boot_video_fps:-30}" \
+      --arg boot_type "${boot_bootanimation_module_type:-standard}" \
+      --arg duration "${boot_video_duration:-0}" \
+      --arg video_file_id "$VIDEO_FILE_ID" \
+      '{
+        "title": $base_meta.title,
+        "creator": {
+          "user_id": $base_meta.creator.id,
+          "name": $base_meta.creator.name
+        },
+        "download_url": $download_url,
+        "preview_url": $preview_url,
+        "tags": ($base_meta.tags // []),
+        "video": {
+          "file_id": $video_file_id,
+          "file_unique_id": ($base_meta.unique_file_id // ""),
+          "ref_message_id": ($base_meta.ref_message_id // 0)
+        },
+        "details": {
+          "resolution": {
+            "module": $boot_res,
+            "video": $video_res
+          },
+          "fps": ($boot_fps | tonumber),
+          "duration": ($duration | tonumber | round),
+          "type": $boot_type
+        }
+      }')
+    
+    if [ $? -ne 0 ] || [ -z "$POST_METADATA" ]; then
+      log_fatal "Failed to generate post metadata JSON"
+      exit 1
+    fi
+    
+    echo "export POST_METADATA='$POST_METADATA'" >> $CIRRUS_ENV
+    log_info "Post metadata generated successfully"
+  
+  # ============================================================================
+  # NOTIFICATION: Success
+  # ============================================================================
+  
+  notify_completed_script: |
+    set -e
+    source scripts/logger.sh
+    export CURRENT_STAGE="Notification - Completed"
+    
+    if [ -z "$POST_METADATA" ]; then
+      log_fatal "POST_METADATA is empty, cannot send completed notification"
+      exit 1
+    fi
+    
+    scripts/notify.sh --status "completed" --data "$POST_METADATA"
+    log_info "Completed notification sent successfully"
+  
+  # ============================================================================
+  # FAILURE HANDLER
+  # ============================================================================
+  
+  on_failure:
+    notify_failed_script: |
+      source scripts/logger.sh
+      export CURRENT_STAGE="Notification - Failed"
+      
+      # Determine which stage failed
+      FAILURE_STAGE="${CURRENT_STAGE:-Unknown Stage}"
+      
+      log_info "Job failed at stage: $FAILURE_STAGE"
+      scripts/notify.sh --status "failed" \
+        --message "Job failed at stage: $FAILURE_STAGE" || true
+  
+  # ============================================================================
+  # CLEANUP (Always runs)
+  # ============================================================================
+  
+  always:
+    cleanup_script: |
+      source scripts/logger.sh 2>/dev/null || true
+      echo "Cleaning up temporary files..."
+      rm -f video.mp4 preview.mp4 2>/dev/null || true
+      echo "Cleanup complete"
