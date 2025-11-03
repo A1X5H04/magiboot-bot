@@ -11,7 +11,7 @@ process_video_task:
   
   # Use Ubuntu with Docker support
   container:
-    image: ubuntu:22.04
+    image: jrottenberg/ffmpeg:4.4-ubuntu
     cpu: 2
     memory: 4GB
   
@@ -41,9 +41,6 @@ process_video_task:
     echo "Installing system dependencies..."
     apt-get update -qq
     apt-get install -y -qq curl jq git ca-certificates > /dev/null 2>&1
-    
-    echo "Installing Docker..."
-    apt-get install -y -qq docker.io > /dev/null 2>&1
     
     echo "Dependencies installed successfully"
   
@@ -169,38 +166,6 @@ process_video_task:
     
     log_info "Video downloaded successfully ($(du -h video.mp4 | cut -f1))"
   
-  # ============================================================================
-  # FFMPEG SETUP WITH CACHING
-  # ============================================================================
-  
-  ffmpeg_cache:
-    folder: /tmp/docker-cache
-    fingerprint_script: echo "ffmpeg-4.4-ubuntu"
-    populate_script: |
-      set -e
-      mkdir -p /tmp/docker-cache
-      echo "Pulling FFmpeg Docker image..."
-      docker pull jrottenberg/ffmpeg:4.4-ubuntu
-      docker save jrottenberg/ffmpeg:4.4-ubuntu -o /tmp/docker-cache/ffmpeg.tar
-      echo "FFmpeg image cached"
-  
-  load_ffmpeg_script: |
-    set -e
-    source scripts/logger.sh
-    export CURRENT_STAGE="FFmpeg Setup"
-    
-    if [ -f /tmp/docker-cache/ffmpeg.tar ]; then
-      log_info "Loading FFmpeg from cache..."
-      if docker load -i /tmp/docker-cache/ffmpeg.tar; then
-        log_info "FFmpeg loaded from cache successfully"
-      else
-        log_info "Cache corrupted, pulling fresh image..."
-        docker pull jrottenberg/ffmpeg:4.4-ubuntu
-      fi
-    else
-      log_info "Cache miss, pulling FFmpeg from registry..."
-      docker pull jrottenberg/ffmpeg:4.4-ubuntu
-    fi
   
   # ============================================================================
   # VIDEO PROCESSING
@@ -211,27 +176,12 @@ process_video_task:
     source scripts/logger.sh
     export CURRENT_STAGE="Video Processing"
     
-    log_info "Starting containerized video processing..."
+    log_info "Starting video processing..."
     
-    CONTAINER_USER_ERROR_LOG="/workdir/user_errors.log"
-    CONTAINER_INTERNAL_DEBUG_LOG="/workdir/build_log.jsonl"
+    chmod +x scripts/logger.sh scripts/prepare_bootanimation.sh
     
-    CONTAINER_COMMAND="chmod +x scripts/logger.sh scripts/prepare_bootanimation.sh && apt-get update -y >/dev/null 2>&1 && apt-get install -y jq >/dev/null 2>&1 && source scripts/logger.sh && ./scripts/prepare_bootanimation.sh video.mp4"
-    
-    # Execute processing with error handling
     set +e
-    OUTPUT_STRING=$(docker run --rm \
-      -v "$(pwd):/workdir" \
-      -w /workdir \
-      -e METADATA_JSON \
-      -e "INTERNAL_DEBUG_LOG=${CONTAINER_INTERNAL_DEBUG_LOG}" \
-      -e "USER_ERROR_LOG=${CONTAINER_USER_ERROR_LOG}" \
-      -e RUN_DEBUG_LOGS \
-      -e CURRENT_STAGE \
-      --entrypoint "bash" \
-      jrottenberg/ffmpeg:4.4-ubuntu \
-      -c "$CONTAINER_COMMAND" 2>&1)
-    
+    OUTPUT_STRING=$(./scripts/prepare_bootanimation.sh video.mp4 2>&1)
     PROCESSING_EXIT_CODE=$?
     set -e
     
@@ -310,11 +260,7 @@ process_video_task:
     log_info "Generating MP4 preview..."
     
     set +e
-    docker run --rm \
-      -v "$(pwd):/workdir" \
-      -w /workdir \
-      jrottenberg/ffmpeg:4.4-ubuntu \
-      -v error -hwaccel auto -i video.mp4 \
+    ffmpeg -v error -hwaccel auto -i video.mp4 \
       -vf "fps=15,scale=320:-2,format=yuv420p" \
       -an -c:v libx264 -crf 28 -preset ultrafast \
       -movflags +faststart preview.mp4 2>&1
