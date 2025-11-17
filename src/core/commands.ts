@@ -6,13 +6,14 @@ import { handleGroupCreateCommand } from "../handlers/bootanimation.ts";
 import { handleLeaderboardCommand } from "../handlers/leaderboard.ts";
 import { handlePopularCommand, handleTrendingCommand } from "../handlers/ranking.ts";
 import { handleSearchCommand } from "../handlers/search.ts";
+import { handleHelpCommand } from "../handlers/system.ts";
 
 
 const commandsComposer = new Composer<AppContext>()
 
 // General Commands
-commandsComposer.command("start", (ctx) => ctx.reply("You called start command."))
-commandsComposer.command("help", (ctx) => ctx.reply("You called help command."))
+commandsComposer.command("start", async (ctx) => await ctx.reply("You called start command."))
+commandsComposer.command("help", handleHelpCommand)
 commandsComposer.command("leaderboard", handleLeaderboardCommand)
 commandsComposer.command("popular", handlePopularCommand)
 commandsComposer.command("trending", handleTrendingCommand)
